@@ -5,6 +5,7 @@
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
+#include <linux/device.h>
 
 /*============================================================
             GENRATE A SIMPLE CHARACTER DEVICE
