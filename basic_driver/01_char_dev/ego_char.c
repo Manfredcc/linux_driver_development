@@ -5,7 +5,6 @@
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
-#include <linux/device.h>
 
 /*============================================================
             GENRATE A SIMPLE CHARACTER DEVICE
@@ -22,16 +21,25 @@ GENERAL DESCRIPTION
 static int count = 1;   /* Numbers of char devices */
 module_param(count, int, S_IRUGO);
 
-#define DEBUG    /* hard-code control debugging */
+static bool debug_option = true;    /* hard-code control debugging */
 
-#ifdef DEBUG
-#define ego_debug(format, ...)   \
-            pr_err("[Ego]%s "format, __func__, ##__VA_ARGS__)
-#else
-#define ego_debug(format, ...)
-#endif
+#define ego_err(chip, fmt, ...)     \
+    pr_err("%s: %s " fmt, chip->name,   \
+        __func__, ##__VA_ARGS__)
+
+#define ego_debug(chip, fmt, ...)   \
+    do {                                        \
+        if (debug_option)                       \
+            pr_info("%s: %s: " fmt, chip->name,    \
+                __func__, ##__VA_ARGS__);   \
+        else                                \
+            ;   \
+    } while(0)
+
 
 struct egoist {
+    char *name;
+
     struct cdev cdev;
     struct class *ego_class;
     struct device *ego_device;
@@ -40,6 +48,8 @@ struct egoist {
     dev_t devt;
     char *dev_name;
 
+    bool debug_on;
+
     void *ego_data;
 };
 static struct egoist *chip;
@@ -47,28 +57,28 @@ static struct egoist *chip;
 /* Implement OPS */
 static int ego_open(struct inode *inode, struct file *filep)
 {
-    ego_debug("call %s\n", __func__);
+    ego_debug(chip, "called %s\n", __func__);
 
     return 0;
 }
 
 static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_t *offset)
 {
-    ego_debug("call %s\n", __func__);
+    ego_debug(chip, "called\n");
 
     return count;
 }
 
 static ssize_t ego_write(struct file *filp, const char __user *buf, size_t count, loff_t *offset)
 {
-    ego_debug("call %s\n", __func__);
+    ego_debug(chip, "called\n");
 
     return count;
 }
 
 static int ego_release(struct inode *inode, struct file *filep)
 {
-    ego_debug("call %s\n", __func__);
+    ego_debug(chip ,"called\n");
 
     return 0;
 }
@@ -88,9 +98,11 @@ static int __init ego_char_init(void)
 
     chip = kzalloc(sizeof(*chip), GFP_KERNEL);
     if (!chip) {
-        ego_debug("Failed to alloc mem for egoist[self_struct]\n");
+        ego_debug(chip, "Failed to alloc mem for egoist[self_struct]\n");
         return ENOMEM;
     }
+    chip->name = "Egoist";
+    chip->debug_on = debug_option;
     /*----------------------------------------------
     Step -1- Allocate a char device number for [cdev]
             Take the dynamic method API
@@ -98,7 +110,7 @@ static int __init ego_char_init(void)
     ------------------------------------------------*/
     ret = alloc_chrdev_region(&chip->devt, 0, count, "ego_char");
     if (ret) {
-        ego_debug("Failed to allocate a char device number for [ego_char]\n");
+        ego_err(chip, "Failed to allocate a char device number for [ego_char]\n");
         return EBUSY;
     }
 
@@ -118,14 +130,14 @@ static int __init ego_char_init(void)
     ------------------------------------------------*/
     ret = cdev_add(&chip->cdev, chip->devt, count);
     if (ret) {
-        ego_debug("Failed to add [ego_char] to system\n");
+        ego_err(chip ,"Failed to add [ego_char] to system\n");
         return EBUSY;
     }
 
     /* Create a device class, visible in /sys/class */
     chip->ego_class = class_create(THIS_MODULE, "egoist");
     if (IS_ERR(chip->ego_class)) {
-        ego_debug("Failed to create egoist class\n");
+        ego_err(chip, "Failed to create egoist class\n");
         unregister_chrdev_region(chip->devt, count);
         
         return PTR_ERR(chip->ego_class);
@@ -139,7 +151,7 @@ static int __init ego_char_init(void)
                                         chip->devt + cnt, NULL,
                                         "%s%d", chip->dev_name, cnt);
         if (IS_ERR(&chip->ego_device)) {
-            ego_debug("Faile to create ego device\n");
+            ego_err(chip, "Faile to create ego device\n");
             class_destroy(chip->ego_class);
             unregister_chrdev_region(chip->devt, count);
         
@@ -147,7 +159,7 @@ static int __init ego_char_init(void)
         }
     }
 
-    ego_debug("Egoist:Awesome!\n");
+    ego_debug(chip, "Egoist:Awesome!\n");
 
     return 0;
 }
@@ -163,7 +175,7 @@ static void __exit ego_char_exit(void)
     cdev_del(&chip->cdev);
     class_destroy(chip->ego_class);
 
-    ego_debug("Egoist:See you someday!\n");
+    ego_debug(chip, "Egoist:See you someday!\n");
 }
 
 module_init(ego_char_init);
