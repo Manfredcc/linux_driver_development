@@ -22,10 +22,10 @@ After you unload the module, there will be a log as follow:
 [Ego]ego_char_exit Egoist:See you someday!
 ```
 
-> If you don't want to see this log again, you can comment the hard code out as below:
+> If you don't want to see this log again, you can set `debug_option` false as below:
 >
 > ```c
-> // #define DEBUG    /* hard-code control debugging */
+> static bool debug_option = false;    /* hard-code control debugging */
 > ```
 
 ---
