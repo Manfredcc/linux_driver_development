@@ -1,4 +1,5 @@
 obj-m := ego_char.o
+obj-m := ego_char_led.o
 
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 
