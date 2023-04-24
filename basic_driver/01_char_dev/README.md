@@ -58,9 +58,9 @@ As shown on the figure. The only thing we need to do to light the `led` is just 
 
 In linux kernel, there are two sub-system `pinctrl` and `gpio`, the former is responsible for pin multiplexing and electrical parameter setting as the other one is for specific gpio-setting. We can easily pass specific hardware parameters to them through the flat-device-tree. Coding in the `imx6ull-alientek-emmc.dts` as follows:
 
-<img src="/home/ll/cc/alpha_linux/linux_driver_development/basic_driver/01_char_dev/README.assets/image-20230416223054092.png" alt="image-20230416223054092" style="zoom: 67%;" />
+<img src="./README.assets/image-20230416223054092.png" alt="image-20230416223054092" style="zoom: 67%;" />
 
-<img src="/home/ll/cc/alpha_linux/linux_driver_development/basic_driver/01_char_dev/README.assets/image-20230416223330511.png" alt="image-20230416223330511" style="zoom:67%;" />
+<img src="./README.assets/image-20230416223330511.png" alt="image-20230416223330511" style="zoom:67%;" />
 
 What I did was tell the hardware details to these two subsystems `pinctrl` and ``gpio`. The rest is just a matter of calling the APIs provide by them. 
 
@@ -122,13 +122,13 @@ static ssize_t ego_write(struct file *filp, const char __user *buf, size_t count
 
 After loading this driver.ko , the result is as below:
 
-![](/home/ll/cc/alpha_linux/linux_driver_development/basic_driver/01_char_dev/README.assets/final_result.png)
+![](./README.assets/final_result.png)
 
 Meanwhile, the led(RED) lights off and on in my Alpha board.
 
 <img src="/home/ll/cc/alpha_linux/linux_driver_development/basic_driver/01_char_dev/README.assets/light_off.jpg"  />
 
-![](/home/ll/cc/alpha_linux/linux_driver_development/basic_driver/01_char_dev/README.assets/light_on.jpg)
+![](./README.assets/light_on.jpg)
 
 ---
 
