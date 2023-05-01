@@ -20,6 +20,8 @@ GENERAL DESCRIPTION
     ----------        ---             ------------------------
     2023/04/08        Manfred         Initial reversion
     2023/04/16        Manfred         Modify for Imx6ull-led
+    2023/04/27        Manfred         Modify for Imx6ull-beep
+    2023/05/01        Manfred         Add synchronous protection
 
 ==============================================================*/
 static int count = 1;   /* Numbers of char devices */
@@ -56,6 +58,9 @@ struct egoist {
 
     bool debug_on;
 
+    /* synchronous protection */
+    atomic_t lock;
+
     void *ego_data;
 };
 struct egoist *chip;
@@ -64,6 +69,12 @@ struct egoist *chip;
 static int ego_open(struct inode *inode, struct file *filp)
 {
     ego_debug(chip, "called %s\n", __func__);
+    if (!atomic_dec_and_test(&chip->lock)) {
+        ego_debug(chip, "busy\n");
+        atomic_inc(&chip->lock);
+        return -EBUSY;
+    }
+
     filp->private_data = chip;
 
     return 0;
@@ -104,9 +115,12 @@ static ssize_t ego_write(struct file *filp, const char __user *buf, size_t count
 	return 0;
 }
 
-static int ego_release(struct inode *inode, struct file *filep)
+static int ego_release(struct inode *inode, struct file *filp)
 {
+    struct egoist *chip = filp->private_data;
     ego_debug(chip ,"called\n");
+
+    atomic_inc(&chip->lock);
 
     return 0;
 }
@@ -131,16 +145,17 @@ static int __init ego_char_init(void)
     }
     chip->name = "Egoist";
     chip->debug_on = debug_option;
+    atomic_set(&chip->lock, 1);
 
     /* Config GPIO -1- Get the gpio node*/
-    chip->nd = of_find_node_by_path("/gpioled");
+    chip->nd = of_find_node_by_path("/beep");
     if (!chip->nd) {
         ego_err(chip, "Not get gpioled node\n");
         return -EINVAL;
     }
     ego_debug(chip, "Find gpioled node\n");
     /* Config GPIO -2- Get the property of gpioled node for gpio_num */
-    chip->gpio_num = of_get_named_gpio(chip->nd, "led-gpio", 0);
+    chip->gpio_num = of_get_named_gpio(chip->nd, "beep-gpio", 0);
     if (chip->gpio_num < 0) {
         ego_err(chip, "Can't access the led-gpio");
         return -EINVAL;
