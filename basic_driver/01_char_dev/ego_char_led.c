@@ -22,6 +22,7 @@ GENERAL DESCRIPTION
     2023/04/16        Manfred         Modify for Imx6ull-led
     2023/04/27        Manfred         Modify for Imx6ull-beep
     2023/05/01        Manfred         Add synchronous protection
+    2023/05/02        Manfred         Simple key detection
 
 ==============================================================*/
 static int count = 1;   /* Numbers of char devices */
@@ -60,6 +61,7 @@ struct egoist {
 
     /* synchronous protection */
     atomic_t lock;
+    atomic_t key_value;
 
     void *ego_data;
 };
@@ -76,13 +78,33 @@ static int ego_open(struct inode *inode, struct file *filp)
     }
 
     filp->private_data = chip;
+    ego_debug(chip, "end call %s\n", __func__);
 
     return 0;
 }
 
+#define VALID_KEY   0xF0
+#define INVALID_KEY 0x00
 static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_t *offset)
 {
-    ego_debug(chip, "called\n");
+    int ret = 0;
+    int val;
+    struct egoist *dev = filp->private_data;
+    // ego_debug(chip, "called\n");
+
+    if (0 == gpio_get_value(dev->gpio_num)) {
+        ego_debug(chip, "detect key input\n");
+        while (!gpio_get_value(dev->gpio_num))
+            ;
+        ego_debug(chip, "detect key leave\n");
+        atomic_set(&dev->key_value, VALID_KEY);
+    } else {
+        atomic_set(&dev->key_value, INVALID_KEY);
+    }
+
+    val = atomic_read(&dev->key_value);
+    ego_debug(chip, "val = %d\n", val);
+    ret = copy_to_user(buf, &val, sizeof(val));
 
     return count;
 }
@@ -146,24 +168,27 @@ static int __init ego_char_init(void)
     chip->name = "Egoist";
     chip->debug_on = debug_option;
     atomic_set(&chip->lock, 1);
+    atomic_set(&chip->key_value, INVALID_KEY);
 
     /* Config GPIO -1- Get the gpio node*/
-    chip->nd = of_find_node_by_path("/beep");
+    chip->nd = of_find_node_by_path("/key");
     if (!chip->nd) {
-        ego_err(chip, "Not get gpioled node\n");
+        ego_err(chip, "Not get key node\n");
         return -EINVAL;
     }
-    ego_debug(chip, "Find gpioled node\n");
+    ego_debug(chip, "Find key node\n");
     /* Config GPIO -2- Get the property of gpioled node for gpio_num */
-    chip->gpio_num = of_get_named_gpio(chip->nd, "beep-gpio", 0);
+    chip->gpio_num = of_get_named_gpio(chip->nd, "key-gpio", 0);
     if (chip->gpio_num < 0) {
-        ego_err(chip, "Can't access the led-gpio");
+        ego_err(chip, "Can't access the key-gpio");
         return -EINVAL;
     }
-    ego_debug(chip, "led-gpio num = %d\n", chip->gpio_num);
+    ego_debug(chip, "key-gpio num = %d\n", chip->gpio_num);
     /* Config GPIO -3- Set the direction of the GPIO */
-    ret = gpio_direction_output(chip->gpio_num, 1);
-    if (ret < 0) {
+    gpio_request(chip->gpio_num, "key0");
+    // ret = gpio_direction_output(chip->gpio_num, 1);
+    ret = gpio_direction_input(chip->gpio_num);
+    if (ret) {
         ego_err(chip, "Can't set gpio\n");
     }
 
