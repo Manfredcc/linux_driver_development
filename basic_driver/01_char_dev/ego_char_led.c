@@ -9,6 +9,11 @@
 #include <linux/of.h>
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
+#include <linux/timer.h>
+#include <linux/jiffies.h>
+#include <linux/of_irq.h>
+#include <linux/irq.h>
+#include <linux/interrupt.h>
 
 /*============================================================
             GENRATE A SIMPLE CHARACTER DEVICE
@@ -23,6 +28,7 @@ GENERAL DESCRIPTION
     2023/04/27        Manfred         Modify for Imx6ull-beep
     2023/05/01        Manfred         Add synchronous protection
     2023/05/02        Manfred         Simple key detection
+    2023/05/02        Manfred         Add SPI for key input
 
 ==============================================================*/
 static int count = 1;   /* Numbers of char devices */
@@ -43,7 +49,15 @@ static bool debug_option = true;    /* hard-code control debugging */
             ;   \
     } while(0)
 
+struct irq_keydesc {
+    int gpio;
+    int irqnum;
+    unsigned char value;
+    char name[10];
+    irqreturn_t (*handler)(int, void *);
+};
 
+#define KEY_NUM     1
 struct egoist {
     char *name;
 
@@ -54,18 +68,59 @@ struct egoist {
     int minor;
     dev_t devt;
     char *dev_name;
-    int gpio_num;   /* The serial number of GPIO for led to use */
+    // Move to irq_keydesc
+    // int gpio_num;   /* The serial number of GPIO for led to use */
+    struct irq_keydesc irqkeydesc[KEY_NUM]; /* array of key interrupts */
+    unsigned char current_keynum;
+    atomic_t releasekey;
+
     struct device_node *nd;
 
     bool debug_on;
 
     /* synchronous protection */
     atomic_t lock;
-    atomic_t key_value;
+    atomic_t keyvalue;
+
+    struct timer_list debounce_timer;
 
     void *ego_data;
 };
 struct egoist *chip;
+
+/**
+ * Interrupt Service Routine
+ * responsible for key-interrupt
+*/
+static irqreturn_t key0_handler(int irq, void *dev_id)
+{
+    struct egoist *dev = (struct egoist *)dev_id;
+    ego_debug(chip, "1\n");
+
+    dev->current_keynum = 0;
+    dev->debounce_timer.data = (volatile long)dev_id;
+    mod_timer(&dev->debounce_timer, jiffies + msecs_to_jiffies(10));
+    ego_debug(chip, "2\n");
+    return IRQ_RETVAL(IRQ_HANDLED);
+}
+
+void timer_function(unsigned long arg)
+{
+    unsigned char value;
+    unsigned char num;
+    struct irq_keydesc *keydesc;
+    struct egoist *dev = (struct egoist *)arg;
+
+    num = dev->current_keynum;
+    keydesc = &dev->irqkeydesc[num];
+    value = gpio_get_value(keydesc->gpio);
+    if (0 == value) {
+        atomic_set(&dev->keyvalue, keydesc->value);
+    } else {
+        atomic_set(&dev->keyvalue, 0x80 | keydesc->value);
+        atomic_set(&dev->releasekey, 1);
+    }
+}
 
 /* Implement OPS */
 static int ego_open(struct inode *inode, struct file *filp)
@@ -83,30 +138,35 @@ static int ego_open(struct inode *inode, struct file *filp)
     return 0;
 }
 
-#define VALID_KEY   0xF0
-#define INVALID_KEY 0x00
+#define VALID_KEY   0x01
+#define INVALID_KEY 0xFF
 static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_t *offset)
 {
     int ret = 0;
-    int val;
-    struct egoist *dev = filp->private_data;
+    unsigned char keyvalue = 0;
+    unsigned char releasekey = 0;
+    struct egoist *dev = (struct egoist *)filp->private_data;
     // ego_debug(chip, "called\n");
 
-    if (0 == gpio_get_value(dev->gpio_num)) {
-        ego_debug(chip, "detect key input\n");
-        while (!gpio_get_value(dev->gpio_num))
-            ;
-        ego_debug(chip, "detect key leave\n");
-        atomic_set(&dev->key_value, VALID_KEY);
+    keyvalue = atomic_read(&dev->keyvalue);
+    releasekey = atomic_read(&dev->releasekey);
+
+    if (releasekey) { /* there's a button pressed */
+        if (keyvalue & 0x80) {
+            keyvalue &= ~0x80;
+            ret = copy_to_user(buf, &keyvalue, sizeof(keyvalue));
+        } else {
+            goto data_error;
+        }
+        atomic_set(&dev->releasekey, 0);
     } else {
-        atomic_set(&dev->key_value, INVALID_KEY);
+        goto data_error;
     }
 
-    val = atomic_read(&dev->key_value);
-    ego_debug(chip, "val = %d\n", val);
-    ret = copy_to_user(buf, &val, sizeof(val));
+    return 0;
 
-    return count;
+data_error:
+    return -EINVAL;
 }
 
 enum LED_STATUS {
@@ -119,7 +179,7 @@ static ssize_t ego_write(struct file *filp, const char __user *buf, size_t count
 	int retvalue;
 	unsigned char databuf[1];
 	unsigned char ledstat;
-	struct egoist *dev = filp->private_data;
+	// struct egoist *dev = filp->private_data;
 
 	retvalue = copy_from_user(databuf, buf, count);
 	if(retvalue < 0) {
@@ -129,11 +189,11 @@ static ssize_t ego_write(struct file *filp, const char __user *buf, size_t count
 
 	ledstat = databuf[0];		/* 获取状态值 */
 
-	if(ledstat == LED_ON) {
-		gpio_set_value(dev->gpio_num, 0);	/* 打开LED灯 */
-	} else if(ledstat == LED_OFF) {
-		gpio_set_value(dev->gpio_num, 1);	/* 关闭LED灯 */
-	}
+	// if(ledstat == LED_ON) {
+	// 	gpio_set_value(dev->gpio_num, 0);	/* 打开LED灯 */
+	// } else if(ledstat == LED_OFF) {
+	// 	gpio_set_value(dev->gpio_num, 1);	/* 关闭LED灯 */
+	// }
 	return 0;
 }
 
@@ -159,6 +219,7 @@ static int __init ego_char_init(void)
 {
     int ret;
     int cnt;
+    int i;
 
     chip = kzalloc(sizeof(*chip), GFP_KERNEL);
     if (!chip) {
@@ -168,7 +229,8 @@ static int __init ego_char_init(void)
     chip->name = "Egoist";
     chip->debug_on = debug_option;
     atomic_set(&chip->lock, 1);
-    atomic_set(&chip->key_value, INVALID_KEY);
+    atomic_set(&chip->keyvalue, INVALID_KEY);
+    atomic_set(&chip->releasekey, 0);
 
     /* Config GPIO -1- Get the gpio node*/
     chip->nd = of_find_node_by_path("/key");
@@ -178,19 +240,48 @@ static int __init ego_char_init(void)
     }
     ego_debug(chip, "Find key node\n");
     /* Config GPIO -2- Get the property of gpioled node for gpio_num */
-    chip->gpio_num = of_get_named_gpio(chip->nd, "key-gpio", 0);
-    if (chip->gpio_num < 0) {
-        ego_err(chip, "Can't access the key-gpio");
-        return -EINVAL;
+    for (i = 0; i < KEY_NUM; i++) {
+        chip->irqkeydesc[i].gpio = of_get_named_gpio(chip->nd, "key-gpio", i);
+        if (chip->irqkeydesc[i].gpio < 0) {
+            ego_err(chip, "Can't access the key-gpio%d\n", i);
+            return -EINVAL;
+        }
+        ego_debug(chip, "key-gpio num = %d\n", chip->irqkeydesc[i].gpio);
     }
-    ego_debug(chip, "key-gpio num = %d\n", chip->gpio_num);
-    /* Config GPIO -3- Set the direction of the GPIO */
-    gpio_request(chip->gpio_num, "key0");
-    // ret = gpio_direction_output(chip->gpio_num, 1);
-    ret = gpio_direction_input(chip->gpio_num);
-    if (ret) {
-        ego_err(chip, "Can't set gpio\n");
+    /* Config GPIO -3- Initialize GPIOs of the KEY-array, and set them for interrupt */
+    for (i = 0; i < KEY_NUM; i++) {
+        memset(chip->irqkeydesc[i].name, 0, sizeof(chip->irqkeydesc[i].name));
+        sprintf(chip->irqkeydesc[i].name, "KEY%d", i);
+        gpio_request(chip->irqkeydesc[i].gpio, chip->irqkeydesc[i].name);
+        ret = gpio_direction_input(chip->irqkeydesc[i].gpio);
+        if (ret) {
+            ego_err(chip, "Can't set gpio\n");
+        }
+        /* get the irq-line from fdt */
+        chip->irqkeydesc[i].irqnum = irq_of_parse_and_map(chip->nd, i);
+        ego_debug(chip, "key%d [gpio_num:%d, irq_num:%d]\n", i, 
+                                    chip->irqkeydesc[i].gpio, 
+                                    chip->irqkeydesc[i].irqnum);
     }
+    /* request irq */
+    chip->irqkeydesc[0].handler = key0_handler;
+    chip->irqkeydesc[0].value = VALID_KEY;
+
+    for (i = 0; i < KEY_NUM; i++) {
+        ret = request_irq(chip->irqkeydesc[i].irqnum,
+                          chip->irqkeydesc[i].handler,
+                          IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
+                          chip->irqkeydesc[i].name,
+                          chip);
+        if (ret < 0) {
+            ego_debug(chip, "irq request %d failed!\n", i);
+            return -EFAULT;
+        }
+    }
+
+    /* create a timer for debounce */
+    init_timer(&chip->debounce_timer);
+    chip->debounce_timer.function = timer_function;
 
     /*----------------------------------------------
     Step -1- Allocate a char device number for [cdev]
