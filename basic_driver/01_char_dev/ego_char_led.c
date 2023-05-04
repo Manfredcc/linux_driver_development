@@ -14,8 +14,10 @@
 #include <linux/of_irq.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
+#include <linux/hrtimer.h>
+#include <linux/ktime.h>
 
-/*============================================================
+/*==================================================================================
             GENRATE A SIMPLE CHARACTER DEVICE
 
 GENERAL DESCRIPTION
@@ -29,9 +31,10 @@ GENERAL DESCRIPTION
     2023/05/01        Manfred         Add synchronous protection
     2023/05/02        Manfred         Simple key detection
     2023/05/02        Manfred         Add SPI for key input
+    2023/05/03        Manfred         Add key-inter to control beep
 
-==============================================================*/
-static int count = 1;   /* Numbers of char devices */
+===================================================================================*/
+static int count = 1;   /* Numbers of char devices - default:1 */
 module_param(count, int, S_IRUGO);
 
 static bool debug_option = true;    /* hard-code control debugging */
@@ -50,11 +53,18 @@ static bool debug_option = true;    /* hard-code control debugging */
     } while(0)
 
 struct irq_keydesc {
+    char name[10];
     int gpio;
     int irqnum;
     unsigned char value;
-    char name[10];
     irqreturn_t (*handler)(int, void *);
+};
+
+struct beep {
+    char name[10];
+    int gpio;
+    bool status;
+    int duration;
 };
 
 #define KEY_NUM     1
@@ -68,11 +78,10 @@ struct egoist {
     int minor;
     dev_t devt;
     char *dev_name;
-    // Move to irq_keydesc
-    // int gpio_num;   /* The serial number of GPIO for led to use */
+    struct beep beep;
     struct irq_keydesc irqkeydesc[KEY_NUM]; /* array of key interrupts */
     unsigned char current_keynum;
-    atomic_t releasekey;
+    atomic_t releasekey; /* indicate key has been pressed and released */
 
     struct device_node *nd;
 
@@ -83,6 +92,7 @@ struct egoist {
     atomic_t keyvalue;
 
     struct timer_list debounce_timer;
+    struct hrtimer beep_timer;
 
     void *ego_data;
 };
@@ -95,16 +105,14 @@ struct egoist *chip;
 static irqreturn_t key0_handler(int irq, void *dev_id)
 {
     struct egoist *dev = (struct egoist *)dev_id;
-    ego_debug(chip, "1\n");
 
     dev->current_keynum = 0;
     dev->debounce_timer.data = (volatile long)dev_id;
     mod_timer(&dev->debounce_timer, jiffies + msecs_to_jiffies(10));
-    ego_debug(chip, "2\n");
     return IRQ_RETVAL(IRQ_HANDLED);
 }
 
-void timer_function(unsigned long arg)
+void debounce_timer_function(unsigned long arg)
 {
     unsigned char value;
     unsigned char num;
@@ -120,6 +128,15 @@ void timer_function(unsigned long arg)
         atomic_set(&dev->keyvalue, 0x80 | keydesc->value);
         atomic_set(&dev->releasekey, 1);
     }
+}
+
+enum hrtimer_restart beep_duration_hrtimer(struct hrtimer *timer)
+{
+    ego_debug(chip, "%s called (%ld).\n", __func__, jiffies);
+    gpio_direction_output(chip->beep.gpio, 1);
+    chip->beep.status = 0;
+
+    return HRTIMER_NORESTART;
 }
 
 /* Implement OPS */
@@ -139,7 +156,7 @@ static int ego_open(struct inode *inode, struct file *filp)
 }
 
 #define VALID_KEY   0x01
-#define INVALID_KEY 0xFF
+#define INVALID_KEY 0x00
 static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_t *offset)
 {
     int ret = 0;
@@ -155,6 +172,11 @@ static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_
         if (keyvalue & 0x80) {
             keyvalue &= ~0x80;
             ret = copy_to_user(buf, &keyvalue, sizeof(keyvalue));
+            gpio_direction_output(chip->beep.gpio, 0);
+            ego_debug(chip, "Starting timer to fire in %dms (%ld)\n", \
+           chip->beep.duration, jiffies );
+            chip->beep.status = 1;
+            hrtimer_start(&chip->beep_timer, ms_to_ktime(chip->beep.duration), HRTIMER_MODE_REL);
         } else {
             goto data_error;
         }
@@ -215,31 +237,49 @@ static const struct file_operations ego_ops = {
     .release  =   ego_release,
 };
 
-static int __init ego_char_init(void)
+static int beep_init(struct egoist *chip)
 {
     int ret;
-    int cnt;
-    int i;
 
-    chip = kzalloc(sizeof(*chip), GFP_KERNEL);
-    if (!chip) {
-        ego_debug(chip, "Failed to alloc mem for egoist[self_struct]\n");
-        return ENOMEM;
+    chip->beep.duration = 1000; /* unit:ms */
+    chip->beep.status = 0;      /* not active */
+
+    chip->nd = of_find_node_by_path("/beep");
+    if (!chip->nd) {
+        ego_err(chip, "Not get bepp node\n");
+        return -EINVAL;
     }
-    chip->name = "Egoist";
-    chip->debug_on = debug_option;
-    atomic_set(&chip->lock, 1);
-    atomic_set(&chip->keyvalue, INVALID_KEY);
-    atomic_set(&chip->releasekey, 0);
+    ego_debug(chip, "find beep node successfully\n");
 
-    /* Config GPIO -1- Get the gpio node*/
+    chip->beep.gpio = of_get_named_gpio(chip->nd, "beep-gpio", 0);
+    memset(chip->beep.name, 0, sizeof(chip->beep.name));
+    sprintf(chip->beep.name, "beep");
+    gpio_request(chip->beep.gpio, chip->beep.name);
+    ret = gpio_direction_output(chip->beep.gpio, 1);
+    if (ret) {
+            ego_err(chip, "Can't set beep-gpio\n");
+    }
+
+    hrtimer_init(&chip->beep_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    chip->beep_timer.function = beep_duration_hrtimer;
+
+    return 0;
+}
+
+static int key_init(struct egoist *chip)
+{
+    int i;
+    int ret;
+
+    /* -1- Get the key node*/
     chip->nd = of_find_node_by_path("/key");
     if (!chip->nd) {
         ego_err(chip, "Not get key node\n");
         return -EINVAL;
     }
-    ego_debug(chip, "Find key node\n");
-    /* Config GPIO -2- Get the property of gpioled node for gpio_num */
+    ego_debug(chip, "find key node successfully\n");
+
+    /* -2- Get the gpio_num of key */
     for (i = 0; i < KEY_NUM; i++) {
         chip->irqkeydesc[i].gpio = of_get_named_gpio(chip->nd, "key-gpio", i);
         if (chip->irqkeydesc[i].gpio < 0) {
@@ -248,14 +288,15 @@ static int __init ego_char_init(void)
         }
         ego_debug(chip, "key-gpio num = %d\n", chip->irqkeydesc[i].gpio);
     }
-    /* Config GPIO -3- Initialize GPIOs of the KEY-array, and set them for interrupt */
+
+    /* -3- Initialize the GPIOs corresponding to KEY-array, and set interrupts for them */
     for (i = 0; i < KEY_NUM; i++) {
         memset(chip->irqkeydesc[i].name, 0, sizeof(chip->irqkeydesc[i].name));
         sprintf(chip->irqkeydesc[i].name, "KEY%d", i);
         gpio_request(chip->irqkeydesc[i].gpio, chip->irqkeydesc[i].name);
         ret = gpio_direction_input(chip->irqkeydesc[i].gpio);
         if (ret) {
-            ego_err(chip, "Can't set gpio\n");
+            ego_err(chip, "Can't set key-gpio\n");
         }
         /* get the irq-line from fdt */
         chip->irqkeydesc[i].irqnum = irq_of_parse_and_map(chip->nd, i);
@@ -263,6 +304,7 @@ static int __init ego_char_init(void)
                                     chip->irqkeydesc[i].gpio, 
                                     chip->irqkeydesc[i].irqnum);
     }
+ 
     /* request irq */
     chip->irqkeydesc[0].handler = key0_handler;
     chip->irqkeydesc[0].value = VALID_KEY;
@@ -279,9 +321,31 @@ static int __init ego_char_init(void)
         }
     }
 
+    return 0;
+}
+
+static int __init ego_char_init(void)
+{
+    int ret;
+    int cnt;
+
+    chip = kzalloc(sizeof(*chip), GFP_KERNEL);
+    if (!chip) {
+        ego_debug(chip, "Failed to alloc mem for egoist[self_struct]\n");
+        return ENOMEM;
+    }
+    chip->name = "Egoist";
+    chip->debug_on = debug_option;
+    atomic_set(&chip->lock, 1);
+    atomic_set(&chip->keyvalue, INVALID_KEY);
+    atomic_set(&chip->releasekey, 0);
+
+    key_init(chip); /* initialize key resources : gpio.inter */
+    beep_init(chip);
+
     /* create a timer for debounce */
     init_timer(&chip->debounce_timer);
-    chip->debounce_timer.function = timer_function;
+    chip->debounce_timer.function = debounce_timer_function;
 
     /*----------------------------------------------
     Step -1- Allocate a char device number for [cdev]
@@ -347,6 +411,19 @@ static int __init ego_char_init(void)
 static void __exit ego_char_exit(void)
 {
     int cnt;
+    int ret;
+
+    del_timer_sync(&chip->debounce_timer);
+    ret = hrtimer_cancel(&chip->beep_timer);
+    if (ret) {
+        ego_debug(chip, "the beep timer is still in use\n");
+    }
+
+    for (cnt = 0; cnt < KEY_NUM; cnt++) {
+        free_irq(chip->irqkeydesc[cnt].irqnum, chip);
+        gpio_free(chip->irqkeydesc[cnt].gpio);
+    }
+    gpio_free(chip->beep.gpio);
 
     unregister_chrdev_region(chip->devt, count);
     for (cnt = 0; cnt < count; cnt++) {
