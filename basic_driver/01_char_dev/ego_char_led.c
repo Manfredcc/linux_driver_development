@@ -32,6 +32,7 @@ GENERAL DESCRIPTION
     2023/05/02        Manfred         Simple key detection
     2023/05/02        Manfred         Add SPI for key input
     2023/05/03        Manfred         Add key-inter to control beep
+    2023/05/04        Manfred         Add sysfs properties to debug beep
 
 ===================================================================================*/
 static int count = 1;   /* Numbers of char devices - default:1 */
@@ -97,6 +98,56 @@ struct egoist {
     void *ego_data;
 };
 struct egoist *chip;
+
+static ssize_t duration_show(struct class *c, struct class_attribute *attr, char *buf)
+{
+    ego_debug(chip ,"called\n");
+
+    return scnprintf(buf, PAGE_SIZE, "beep:%d\n", chip->beep.duration);
+}
+
+static ssize_t duration_store(struct class *c, struct class_attribute *attr, const char *buf, size_t count)
+{
+    ego_debug(chip ,"called\n");
+
+    sscanf(buf, "%d", &chip->beep.duration);
+    ego_debug(chip, "store %d to duration\n", chip->beep.duration);
+
+    return count;
+}
+
+CLASS_ATTR_RW(duration);
+
+static ssize_t activate_show(struct class *c, struct class_attribute *attr, char *buf)
+{
+    ego_debug(chip ,"called\n");
+
+    return scnprintf(buf, PAGE_SIZE, "beep:%d\n", chip->beep.status);
+}
+
+static ssize_t activate_store(struct class *c, struct class_attribute *attr, const char *buf, size_t count)
+{
+    int activate = 0;
+    ego_debug(chip ,"called\n");
+
+    sscanf(buf, "%d", &activate);
+    gpio_direction_output(chip->beep.gpio, 0);
+    if (1 == activate) {
+        chip->beep.status = 1;
+        hrtimer_start(&chip->beep_timer, ms_to_ktime(chip->beep.duration), HRTIMER_MODE_REL);
+    }
+
+    return count;
+}
+
+CLASS_ATTR_RW(activate);
+
+static struct attribute *egoist_class_attrs[] = {
+    &class_attr_duration.attr,
+    &class_attr_activate.attr,
+    NULL
+};
+ATTRIBUTE_GROUPS(egoist_class);
 
 /**
  * Interrupt Service Routine
@@ -380,12 +431,20 @@ static int __init ego_char_init(void)
     }
 
     /* Create a device class, visible in /sys/class */
-    chip->ego_class = class_create(THIS_MODULE, "egoist");
-    if (IS_ERR(chip->ego_class)) {
+    chip->ego_class = kzalloc(sizeof(*chip->ego_class), GFP_KERNEL);
+    if (!chip->ego_class) {
+        ego_err(chip, "create ego_class failed\n");
+        return ENOMEM;
+    }
+    chip->ego_class->name = "egoist";
+    chip->ego_class->owner = THIS_MODULE;
+    chip->ego_class->dev_groups = egoist_class_groups;
+    ret = class_register(chip->ego_class);
+    if (ret) {
         ego_err(chip, "Failed to create egoist class\n");
         unregister_chrdev_region(chip->devt, count);
         
-        return PTR_ERR(chip->ego_class);
+        return ret;
     }
 
     /* Create a device, visible in /dev/ */
