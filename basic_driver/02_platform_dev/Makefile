@@ -1,4 +1,5 @@
 obj-m := ego_platform.o
+obj-m := ego_platform_evo.o
 
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 

@@ -3,3 +3,9 @@ As you can see, this repository is used for keeping tract of my driver developme
 In this repository, I'll upload my linux driver codes which is vertical verifyed locally by me.
 
 If you have some question, please feel free to leave message or test me directly. I will be very glad if I can give some help to you.
+
+
+
+**Note:**
+
+All drivers are developed based on linux-kernel-4.1.15
