@@ -17,6 +17,7 @@
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
 #include <linux/platform_device.h>
+#include <linux/input.h>
 
 /*==================================================================================
             GENRATE A SIMPLE CHARACTER DEVICE
@@ -35,6 +36,7 @@ GENERAL DESCRIPTION
     2023/05/03        Manfred         Add key-inter to control beep
     2023/05/04        Manfred         Add sysfs properties to debug beep
     2023/05/07        Manfred         Transplant to platform-drv
+    2023/05/07        Manfred         Add input-subsys for key press
 
 ===================================================================================*/
 static int count = 1;   /* Numbers of char devices - default:1 */
@@ -84,6 +86,7 @@ struct egoist {
     struct beep beep;
     struct irq_keydesc irqkeydesc[KEY_NUM]; /* array of key interrupts */
     unsigned char current_keynum;
+    struct input_dev *idev_key;
     atomic_t releasekey; /* indicate key has been pressed and released */
 
     struct device_node *nd;
@@ -176,10 +179,19 @@ void debounce_timer_function(unsigned long arg)
     keydesc = &dev->irqkeydesc[num];
     value = gpio_get_value(keydesc->gpio);
     if (0 == value) {
-        atomic_set(&dev->keyvalue, keydesc->value);
+        // atomic_set(&dev->keyvalue, keydesc->value);
+        input_report_key(chip->idev_key, keydesc->value, 1);
+        input_sync(chip->idev_key);
+        gpio_direction_output(chip->beep.gpio, 0);
+        ego_debug(chip, "Starting timer to fire in %dms (%ld)\n", \
+           chip->beep.duration, jiffies );
+        chip->beep.status = 1;
+        hrtimer_start(&chip->beep_timer, ms_to_ktime(chip->beep.duration), HRTIMER_MODE_REL);
     } else {
-        atomic_set(&dev->keyvalue, 0x80 | keydesc->value);
-        atomic_set(&dev->releasekey, 1);
+        // atomic_set(&dev->keyvalue, 0x80 | keydesc->value);
+        // atomic_set(&dev->releasekey, 1);
+        input_report_key(chip->idev_key, keydesc->value, 0);
+        input_sync(chip->idev_key);
     }
 }
 
@@ -360,7 +372,7 @@ static int key_init(struct egoist *chip)
 
     /* request irq */
     chip->irqkeydesc[0].handler = key0_handler;
-    chip->irqkeydesc[0].value = VALID_KEY;
+    chip->irqkeydesc[0].value = KEY_0;
 
     for (i = 0; i < KEY_NUM; i++) {
         ret = request_irq(chip->irqkeydesc[i].irqnum,
@@ -372,6 +384,24 @@ static int key_init(struct egoist *chip)
             ego_debug(chip, "irq request %d failed!\n", i);
             return -EFAULT;
         }
+    }
+
+    /* request input_dev */
+    chip->idev_key = input_allocate_device();
+    if (!chip->idev_key) {
+        ego_err(chip, "create input device failed\n");
+        return -ENOMEM;
+    }
+    chip->idev_key->name = "key_input";
+    /* set to keystork event, repeatable */
+    chip->idev_key->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REP);
+    /* initialize key info */
+    input_set_capability(chip->idev_key, EV_KEY, KEY_0);
+
+    ret = input_register_device(chip->idev_key);
+    if (ret) {
+        ego_err(chip, "register input key failed\n");
+        return ret;
     }
 
     return 0;
@@ -480,6 +510,9 @@ static int egoist_remove(struct platform_device *dev)
         gpio_free(chip->irqkeydesc[cnt].gpio);
     }
     gpio_free(chip->beep.gpio);
+
+    input_unregister_device(chip->idev_key);
+    input_free_device(chip->idev_key);
 
     unregister_chrdev_region(chip->devt, count);
     for (cnt = 0; cnt < count; cnt++) {
