@@ -182,6 +182,11 @@ void debounce_timer_function(unsigned long arg)
         // atomic_set(&dev->keyvalue, keydesc->value);
         input_report_key(chip->idev_key, keydesc->value, 1);
         input_sync(chip->idev_key);
+        gpio_direction_output(chip->beep.gpio, 0);
+        ego_debug(chip, "Starting timer to fire in %dms (%ld)\n", \
+           chip->beep.duration, jiffies );
+        chip->beep.status = 1;
+        hrtimer_start(&chip->beep_timer, ms_to_ktime(chip->beep.duration), HRTIMER_MODE_REL);
     } else {
         // atomic_set(&dev->keyvalue, 0x80 | keydesc->value);
         // atomic_set(&dev->releasekey, 1);
