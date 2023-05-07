@@ -40,7 +40,7 @@ As a result of `ego_char_led.c` of transplantation, you can also`echo xxx(ms) > 
 
 **As a platform drv, something extra is coming**
 
-![image-20230507173124048](./readme.assets\image-20230507173124048.png)
+![image-20230507173124048](./readme.assets/image-20230507173124048.png)
 
 A platform driver is register to corresponding bus `sys/bus/platform/driver/Egoist_drv`
 
@@ -48,7 +48,7 @@ and the `egoist` is linked to `/sys/bus/platform/devices/egoist`, which was asso
 
 Of course, the device is associate with the driver, they are associate by `compatible`.
 
-![image-20230507173814924](./readme.assets\image-20230507173814924.png)
+![image-20230507173814924](./readme.assets/image-20230507173814924.png)
 
 ---
 
@@ -56,8 +56,8 @@ Of course, the device is associate with the driver, they are associate by `compa
 
 driver:
 
-![image-20230507174059477](./readme.assets\image-20230507174059477.png)
+![image-20230507174059477](./readme.assets/image-20230507174059477.png)
 
 fdt:
 
-![image-20230507174237323](./readme.assets\image-20230507174237323.png)
+![image-20230507174237323](./readme.assets/image-20230507174237323.png)
