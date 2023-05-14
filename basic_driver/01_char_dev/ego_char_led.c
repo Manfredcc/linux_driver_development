@@ -44,7 +44,7 @@ static bool debug_option = true;    /* hard-code control debugging */
     pr_err("%s: %s " fmt, chip->name,   \
         __func__, ##__VA_ARGS__)
 
-#define ego_debug(chip, fmt, ...)   \
+#define ego_info(chip, fmt, ...)   \
     do {                                        \
         if (debug_option)                       \
             pr_info("%s: %s: " fmt, chip->name,    \
@@ -101,17 +101,17 @@ struct egoist *chip;
 
 static ssize_t duration_show(struct class *c, struct class_attribute *attr, char *buf)
 {
-    ego_debug(chip ,"called\n");
+    ego_info(chip ,"called\n");
 
     return scnprintf(buf, PAGE_SIZE, "beep:%d\n", chip->beep.duration);
 }
 
 static ssize_t duration_store(struct class *c, struct class_attribute *attr, const char *buf, size_t count)
 {
-    ego_debug(chip ,"called\n");
+    ego_info(chip ,"called\n");
 
     sscanf(buf, "%d", &chip->beep.duration);
-    ego_debug(chip, "store %d to duration\n", chip->beep.duration);
+    ego_info(chip, "store %d to duration\n", chip->beep.duration);
 
     return count;
 }
@@ -120,7 +120,7 @@ CLASS_ATTR_RW(duration);
 
 static ssize_t activate_show(struct class *c, struct class_attribute *attr, char *buf)
 {
-    ego_debug(chip ,"called\n");
+    ego_info(chip ,"called\n");
 
     return scnprintf(buf, PAGE_SIZE, "beep:%d\n", chip->beep.status);
 }
@@ -128,7 +128,7 @@ static ssize_t activate_show(struct class *c, struct class_attribute *attr, char
 static ssize_t activate_store(struct class *c, struct class_attribute *attr, const char *buf, size_t count)
 {
     int activate = 0;
-    ego_debug(chip ,"called\n");
+    ego_info(chip ,"called\n");
 
     sscanf(buf, "%d", &activate);
     gpio_direction_output(chip->beep.gpio, 0);
@@ -183,7 +183,7 @@ void debounce_timer_function(unsigned long arg)
 
 enum hrtimer_restart beep_duration_hrtimer(struct hrtimer *timer)
 {
-    ego_debug(chip, "%s called (%ld).\n", __func__, jiffies);
+    ego_info(chip, "%s called (%ld).\n", __func__, jiffies);
     gpio_direction_output(chip->beep.gpio, 1);
     chip->beep.status = 0;
 
@@ -193,15 +193,15 @@ enum hrtimer_restart beep_duration_hrtimer(struct hrtimer *timer)
 /* Implement OPS */
 static int ego_open(struct inode *inode, struct file *filp)
 {
-    ego_debug(chip, "called %s\n", __func__);
+    ego_info(chip, "called %s\n", __func__);
     if (!atomic_dec_and_test(&chip->lock)) {
-        ego_debug(chip, "busy\n");
+        ego_info(chip, "busy\n");
         atomic_inc(&chip->lock);
         return -EBUSY;
     }
 
     filp->private_data = chip;
-    ego_debug(chip, "end call %s\n", __func__);
+    ego_info(chip, "end call %s\n", __func__);
 
     return 0;
 }
@@ -214,7 +214,7 @@ static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_
     unsigned char keyvalue = 0;
     unsigned char releasekey = 0;
     struct egoist *dev = (struct egoist *)filp->private_data;
-    // ego_debug(chip, "called\n");
+    // ego_info(chip, "called\n");
 
     keyvalue = atomic_read(&dev->keyvalue);
     releasekey = atomic_read(&dev->releasekey);
@@ -224,7 +224,7 @@ static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_
             keyvalue &= ~0x80;
             ret = copy_to_user(buf, &keyvalue, sizeof(keyvalue));
             gpio_direction_output(chip->beep.gpio, 0);
-            ego_debug(chip, "Starting timer to fire in %dms (%ld)\n", \
+            ego_info(chip, "Starting timer to fire in %dms (%ld)\n", \
            chip->beep.duration, jiffies );
             chip->beep.status = 1;
             hrtimer_start(&chip->beep_timer, ms_to_ktime(chip->beep.duration), HRTIMER_MODE_REL);
@@ -273,7 +273,7 @@ static ssize_t ego_write(struct file *filp, const char __user *buf, size_t count
 static int ego_release(struct inode *inode, struct file *filp)
 {
     struct egoist *chip = filp->private_data;
-    ego_debug(chip ,"called\n");
+    ego_info(chip ,"called\n");
 
     atomic_inc(&chip->lock);
 
@@ -300,7 +300,7 @@ static int beep_init(struct egoist *chip)
         ego_err(chip, "Not get bepp node\n");
         return -EINVAL;
     }
-    ego_debug(chip, "find beep node successfully\n");
+    ego_info(chip, "find beep node successfully\n");
 
     chip->beep.gpio = of_get_named_gpio(chip->nd, "beep-gpio", 0);
     memset(chip->beep.name, 0, sizeof(chip->beep.name));
@@ -328,7 +328,7 @@ static int key_init(struct egoist *chip)
         ego_err(chip, "Not get key node\n");
         return -EINVAL;
     }
-    ego_debug(chip, "find key node successfully\n");
+    ego_info(chip, "find key node successfully\n");
 
     /* -2- Get the gpio_num of key */
     for (i = 0; i < KEY_NUM; i++) {
@@ -337,7 +337,7 @@ static int key_init(struct egoist *chip)
             ego_err(chip, "Can't access the key-gpio%d\n", i);
             return -EINVAL;
         }
-        ego_debug(chip, "key-gpio num = %d\n", chip->irqkeydesc[i].gpio);
+        ego_info(chip, "key-gpio num = %d\n", chip->irqkeydesc[i].gpio);
     }
 
     /* -3- Initialize the GPIOs corresponding to KEY-array, and set interrupts for them */
@@ -351,7 +351,7 @@ static int key_init(struct egoist *chip)
         }
         /* get the irq-line from fdt */
         chip->irqkeydesc[i].irqnum = irq_of_parse_and_map(chip->nd, i);
-        ego_debug(chip, "key%d [gpio_num:%d, irq_num:%d]\n", i, 
+        ego_info(chip, "key%d [gpio_num:%d, irq_num:%d]\n", i, 
                                     chip->irqkeydesc[i].gpio, 
                                     chip->irqkeydesc[i].irqnum);
     }
@@ -367,7 +367,7 @@ static int key_init(struct egoist *chip)
                           chip->irqkeydesc[i].name,
                           chip);
         if (ret < 0) {
-            ego_debug(chip, "irq request %d failed!\n", i);
+            ego_info(chip, "irq request %d failed!\n", i);
             return -EFAULT;
         }
     }
@@ -382,7 +382,7 @@ static int __init ego_char_init(void)
 
     chip = kzalloc(sizeof(*chip), GFP_KERNEL);
     if (!chip) {
-        ego_debug(chip, "Failed to alloc mem for egoist[self_struct]\n");
+        ego_info(chip, "Failed to alloc mem for egoist[self_struct]\n");
         return ENOMEM;
     }
     chip->name = "Egoist";
@@ -410,7 +410,7 @@ static int __init ego_char_init(void)
     }
 
     chip->major = MAJOR(chip->devt);
-    ego_debug(chip, "major = %d\n", chip->major);
+    ego_info(chip, "major = %d\n", chip->major);
     /*----------------------------------------------
     Step -2- Initialize [cdev] and associate it with
     the [File OPS]
@@ -462,7 +462,7 @@ static int __init ego_char_init(void)
         }
     }
 
-    ego_debug(chip, "Egoist:Awesome!\n");
+    ego_info(chip, "Egoist:Awesome!\n");
 
     return 0;
 }
@@ -475,7 +475,7 @@ static void __exit ego_char_exit(void)
     del_timer_sync(&chip->debounce_timer);
     ret = hrtimer_cancel(&chip->beep_timer);
     if (ret) {
-        ego_debug(chip, "the beep timer is still in use\n");
+        ego_info(chip, "the beep timer is still in use\n");
     }
 
     for (cnt = 0; cnt < KEY_NUM; cnt++) {
@@ -491,7 +491,7 @@ static void __exit ego_char_exit(void)
     cdev_del(&chip->cdev);
     class_destroy(chip->ego_class);
 
-    ego_debug(chip, "Egoist:See you someday!\n");
+    ego_info(chip, "Egoist:See you someday!\n");
 }
 
 module_init(ego_char_init);

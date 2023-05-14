@@ -31,7 +31,7 @@ static bool debug_option = true;    /* hard-code control debugging */
     pr_err("%s: %s " fmt, chip->name,   \
         __func__, ##__VA_ARGS__)
 
-#define ego_debug(chip, fmt, ...)   \
+#define ego_info(chip, fmt, ...)   \
     do {                                        \
         if (debug_option)                       \
             pr_info("%s: %s: " fmt, chip->name,    \
@@ -61,28 +61,28 @@ static struct egoist *chip;
 /* Implement OPS */
 static int ego_open(struct inode *inode, struct file *filep)
 {
-    ego_debug(chip, "called %s\n", __func__);
+    ego_info(chip, "called %s\n", __func__);
 
     return 0;
 }
 
 static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_t *offset)
 {
-    ego_debug(chip, "called\n");
+    ego_info(chip, "called\n");
 
     return count;
 }
 
 static ssize_t ego_write(struct file *filp, const char __user *buf, size_t count, loff_t *offset)
 {
-    ego_debug(chip, "called\n");
+    ego_info(chip, "called\n");
 
     return count;
 }
 
 static int ego_release(struct inode *inode, struct file *filep)
 {
-    ego_debug(chip ,"called\n");
+    ego_info(chip ,"called\n");
 
     return 0;
 }
@@ -102,7 +102,7 @@ static int egoist_probe(struct platform_device *dev)
 
     chip = kzalloc(sizeof(*chip), GFP_KERNEL);
     if (!chip) {
-        ego_debug(chip, "Failed to alloc mem for egoist[self_struct]\n");
+        ego_info(chip, "Failed to alloc mem for egoist[self_struct]\n");
         return ENOMEM;
     }
     chip->name = "Egoist";
@@ -163,7 +163,7 @@ static int egoist_probe(struct platform_device *dev)
         }
     }
 
-    ego_debug(chip, "Egoist:Awesome!\n");
+    ego_info(chip, "Egoist:Awesome!\n");
 
     return 0;
 }
@@ -179,7 +179,7 @@ static int egoist_remove(struct platform_device *dev)
     cdev_del(&chip->cdev);
     class_destroy(chip->ego_class);
 
-    ego_debug(chip, "Egoist:See you someday!\n");
+    ego_info(chip, "Egoist:See you someday!\n");
 
     return 0;
 }
