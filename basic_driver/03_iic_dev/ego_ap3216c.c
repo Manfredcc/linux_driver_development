@@ -16,7 +16,7 @@
 #include <asm/uaccess.h>
 #include <linux/i2c.h>
 #include <linux/of.h>
-#include "ego_ap3216c.h"
+#include <linux/regmap.h>
 
 /*==================================================================================
                 GENRATE A I2C DRIVER FOR AP3216C
@@ -27,8 +27,21 @@ GENERAL DESCRIPTION
     When              Who             What, Where, Why
     ----------        ---             ------------------------
     2023/05/13        Manfred         Initial release
+    2023/05/14        Manfred         Use Regmap insteal of i2c_transfer
 
 ===================================================================================*/
+
+#define AP3216C_ADDR    	0X1E	/* I2C slave address */
+/* Register defines */
+#define AP3216C_SYSTEMCONG	0x00
+#define AP3216C_INTSTATUS	0X01
+#define AP3216C_INTCLEAR	0X02
+#define AP3216C_IRDATALOW	0x0A
+#define AP3216C_IRDATAHIGH	0x0B
+#define AP3216C_ALSDATALOW	0x0C
+#define AP3216C_ALSDATAHIGH	0X0D
+#define AP3216C_PSDATALOW	0X0E
+#define AP3216C_PSDATAHIGH	0X0F
 
 static bool debug_option = true;    /* hard-code control debugging */
 #define ego_err(chip, fmt, ...)     \
@@ -55,6 +68,8 @@ typedef struct _egoist {
     int major;
     int minor;
     struct i2c_client *client;
+    struct regmap *regmap;
+    struct regmap_config regmap_config;
     unsigned ir, als, ps;   /* ap3216c data */
 
     bool debug_on;
@@ -70,32 +85,13 @@ pegoist chip = NULL;
  * @buf:data buffer
  * @len:data number
  */
-static int ap3216c_read_regs(pegoist dev, u8 reg, void *buf, int len)
+static unsigned char ap3216c_read_regs(pegoist dev, u8 reg)
 {
-    int ret;
-    struct i2c_msg msg[2];
+    u8 ret;
+    unsigned int data;
 
-    /* specify the reg to read data */
-    msg[0].addr  = dev->client->addr;
-    msg[0].flags = 0;
-    msg[0].buf   = &reg;
-    msg[0].len   = 1;
-
-    /* get data */
-    msg[1].addr  = dev->client->addr;
-    msg[1].flags = I2C_M_RD;
-    msg[1].buf   = buf;
-    msg[1].len   = len;
-
-    ret = i2c_transfer(dev->client->adapter, msg, 2);
-    if (2 == ret) {
-        ret = 0;
-    } else {
-        ego_err(dev, "I2C read failed, ret[%d] reg[%d] len[%d]\n", ret, reg, len);
-        ret = -EREMOTEIO;
-    }
-    
-    return ret;
+    ret = regmap_read(dev->regmap, reg, &data);
+    return (u8)data;
 }
 
 /*
@@ -105,25 +101,14 @@ static int ap3216c_read_regs(pegoist dev, u8 reg, void *buf, int len)
  * @buf:data buffer
  * @len:data number
  */
-static int ap3216c_write_regs(pegoist dev, u8 reg, u8 *buf, u8 len)
+static void ap3216c_write_regs(pegoist dev, u8 reg, u8 data)
 {
-    u8 tem_buf[256];
-    struct i2c_msg msg;
-
-    tem_buf[0] = reg;
-    memcpy(&tem_buf[1], buf, len);
-    msg.addr = dev->client->addr;
-    msg.flags = 0;
-    msg.buf  = tem_buf;
-    msg.len  = len + 1;
-
-    return i2c_transfer(dev->client->adapter, &msg, 1);
+    regmap_write(dev->regmap, reg, data);
 }
 
 /* Implement OPS */
 static int ego_open(struct inode *inode, struct file *filp)
 {
-    u8 tmp_buf[1];
     pegoist dev = container_of(inode->i_cdev, egoist, cdev);
     pr_err("call %s\n", __func__);
     if (!dev) {
@@ -133,11 +118,9 @@ static int ego_open(struct inode *inode, struct file *filp)
     filp->private_data = dev;
 
     /* initialize ap3216c-dev */
-    tmp_buf[0] = 0x04;
-    ap3216c_write_regs(dev, AP3216C_SYSTEMCONG, tmp_buf, 1);
+    ap3216c_write_regs(dev, AP3216C_SYSTEMCONG, 0x04);
     mdelay(50);
-    tmp_buf[0] = 0x03;
-    ap3216c_write_regs(dev, AP3216C_SYSTEMCONG, tmp_buf, 1);
+    ap3216c_write_regs(dev, AP3216C_SYSTEMCONG, 0x03);
 
     ego_info(dev, "initialize ap3216c-dev successfully!\n");
 
@@ -151,7 +134,7 @@ static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_
     pegoist dev = (pegoist)filp->private_data;
 
     for(cnt = 0; cnt < 6; cnt++) { /* get raw data */
-        ap3216c_read_regs(dev, AP3216C_IRDATALOW + cnt, &buf[cnt], 1);
+        buf[cnt] = ap3216c_read_regs(dev, AP3216C_IRDATALOW + cnt);
     }
 
     /* handle data [ir] */
@@ -265,6 +248,12 @@ static int ego_ap3216c_probe(struct i2c_client *client,
     chip->name = "egoist";
     chip->debug_on = debug_option;
     chip->client = client;
+    chip->regmap_config.reg_bits = 8;
+    chip->regmap_config.val_bits = 8;
+    chip->regmap = regmap_init_i2c(client, &chip->regmap_config);
+    if (IS_ERR(chip->regmap)) {
+        return PTR_ERR(chip->regmap);
+    }
 
     ret = ego_char_init(chip);
     if (ret) {
