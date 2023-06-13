@@ -55,12 +55,14 @@ typedef bool (*OLED_INIT)(pegoist chip);
 typedef int  (*OLED_CONF)(pegoist chip, int mode);
 typedef bool (*OLED_REFRESH)(pegoist chip);
 typedef bool (*OLED_POWER)(pegoist chip, bool poweron);
+typedef void (*OLED_CLEAR)(pegoist chip);
 
 typedef struct _OPS_LIB {
     OLED_INIT       oled_init;
     OLED_CONF       oled_conf;
     OLED_REFRESH    oled_refresh;
     OLED_POWER      oled_power;
+    OLED_CLEAR      oled_clear;
 }OPS_LIB;
 
 struct ops {

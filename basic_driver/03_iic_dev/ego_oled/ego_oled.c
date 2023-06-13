@@ -29,12 +29,69 @@ with I2C bus.
     When            Who             What, Where, Why
     ----------      ---             -------------------------
     2023/06/11      Manfred         Initial release
+    2023/06/13      Manfred         Fill basic framework
 
 ===========================================================================*/
 
+pegoist chip = NULL;
+struct ops *ops = NULL;
+
 /*====================OPS for OLED==================+====*/
+void ssd1306_clear(pegoist chip)
+{
+    return;
+}
+
+#define OLED_CMD    0x00
 bool ssd1306_init(pegoist chip)
 {
+    int ret;
+
+    if (!chip) {
+        pr_err("Egoist not initialized\n");
+        return -EINVAL;
+    }
+
+    /* Reset Oled */
+    ret |= gpio_direction_output(chip->oled.gpio, 1);
+    msleep(100);
+    ret |= gpio_direction_output(chip->oled.gpio, 0);
+    msleep(200);
+    ret |= gpio_direction_output(chip->oled.gpio, 1);
+    if (ret) {
+        ego_err(chip, "Can't set oled-gpio[VCC]\n");
+    }
+
+    regmap_write(chip->regmap, OLED_CMD, 0xAE);
+    regmap_write(chip->regmap, OLED_CMD, 0x00);
+    regmap_write(chip->regmap, OLED_CMD, 0x10);
+    regmap_write(chip->regmap, OLED_CMD, 0x40);
+    regmap_write(chip->regmap, OLED_CMD, 0x81);
+    regmap_write(chip->regmap, OLED_CMD, 0xCF);
+    regmap_write(chip->regmap, OLED_CMD, 0xA1);
+    regmap_write(chip->regmap, OLED_CMD, 0xC8);
+    regmap_write(chip->regmap, OLED_CMD, 0xA6);
+    regmap_write(chip->regmap, OLED_CMD, 0xA8);
+    regmap_write(chip->regmap, OLED_CMD, 0x3f);
+    regmap_write(chip->regmap, OLED_CMD, 0xD3);
+    regmap_write(chip->regmap, OLED_CMD, 0x00);
+    regmap_write(chip->regmap, OLED_CMD, 0xd5);
+    regmap_write(chip->regmap, OLED_CMD, 0x80);
+    regmap_write(chip->regmap, OLED_CMD, 0xD9);
+    regmap_write(chip->regmap, OLED_CMD, 0xF1);
+    regmap_write(chip->regmap, OLED_CMD, 0xDA);
+    regmap_write(chip->regmap, OLED_CMD, 0x12);
+    regmap_write(chip->regmap, OLED_CMD, 0xDB);
+    regmap_write(chip->regmap, OLED_CMD, 0x40);
+    regmap_write(chip->regmap, OLED_CMD, 0x20);
+    regmap_write(chip->regmap, OLED_CMD, 0x02);
+    regmap_write(chip->regmap, OLED_CMD, 0x8D);
+    regmap_write(chip->regmap, OLED_CMD, 0x14);
+    regmap_write(chip->regmap, OLED_CMD, 0xA4);
+    regmap_write(chip->regmap, OLED_CMD, 0xA6);
+    regmap_write(chip->regmap, OLED_CMD, 0xAF);
+    ops->FUNC->oled_clear(chip);
+
     return 0;
 }
 
@@ -58,9 +115,11 @@ bool ssd1306_power(pegoist chip, bool poweron)
 {
     return 0;
 }
+
 /*========================================================*/
 static OPS_LIB ops_lib[MAX_SLAVE_CHIP] = { /* standard ops for slave chip */
     {   /* SSD1306 */
+        .oled_clear = ssd1306_clear,
         .oled_init = ssd1306_init,
         .oled_conf = ssd1306_conf,
         .oled_refresh = ssd1306_refresh,
@@ -68,9 +127,6 @@ static OPS_LIB ops_lib[MAX_SLAVE_CHIP] = { /* standard ops for slave chip */
     },
 
 };
-
-pegoist chip = NULL;
-struct ops *ops = NULL;
 
 /* Implement OPS */
 #define OPS_LIB     'E'
