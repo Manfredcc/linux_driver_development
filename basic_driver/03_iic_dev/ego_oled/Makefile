@@ -1,4 +1,5 @@
 obj-m := ego_oled.o
+obj-m := oled_lib.o
 
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 
