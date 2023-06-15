@@ -176,9 +176,25 @@ static int ego_char_init(pegoist chip)
     return 0;
 }
 
-void probe_release(pegoist)
+void probe_release(pegoist chip)
 {
-    //TODO
+    ego_info(chip, "Enter\n");
+
+    if (chip != NULL) {
+        if (chip->oled.gpio != -1) {
+            gpio_free(chip->oled.gpio);
+            chip->oled.gpio = -1;
+        }
+
+        if (!IS_ERR_OR_NULL(chip->class)) {
+            unregister_chrdev_region(chip->devt, 1);
+        }
+
+        if (!IS_ERR_OR_NULL(chip->dev)) {
+            unregister_chrdev_region(chip->devt, 1);
+        }
+       /* More resource will be added below */
+    }
 }
 
 static int ego_oled_probe(struct i2c_client *client,
@@ -218,6 +234,7 @@ static int ego_oled_probe(struct i2c_client *client,
         }
         ops_init(); /* Initialize oled-opearions for loaded chip */
 
+        chip->oled.gpio = -1;
         ret = oled_parse(chip);
         if (ret) {
             ego_err(chip, "Failed to parse oled info\n");
@@ -246,7 +263,10 @@ static int ego_oled_probe(struct i2c_client *client,
 
 static int ego_oled_remove(struct i2c_client *client)
 {
-    return 0;
+    chip = (pegoist)i2c_get_clientdata(client);
+    ego_info(chip, "Enter\n");
+
+    probe_release(chip);
 }
 
 static const struct i2c_device_id ego_oled_id[] = {
