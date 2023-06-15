@@ -38,11 +38,13 @@ pegoist chip = NULL;
 
 /* Implement OPS */
 #define OPS_LIB     'E'
+#define LIB_CLEAR_NO    0x00
 #define LIB_INIT_NO     0x01
 #define LIB_CONF_NO     0x02
 #define LIB_REFRESH_NO  0x03
 #define LIB_POWER_NO    0x04
 
+#define LIB_CLEAR   _IO(OPS_LIB, LIB_CLEAR_NO)
 #define LIB_INIT    _IO(OPS_LIB, LIB_INIT_NO)
 #define LIB_CONF    _IOW(OPS_LIB, LIB_CONF_NO, unsigned long)
 #define LIB_REFRESH _IO(OPS_LIB, LIB_REFRESH_NO)
@@ -50,6 +52,9 @@ pegoist chip = NULL;
 static long ego_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     switch (cmd) {
+    case LIB_CLEAR:
+        oled_operation.FUNC->oled_clear(chip);
+        break;
     case LIB_INIT:
         oled_operation.FUNC->oled_init(chip);
         break;
@@ -233,20 +238,28 @@ static int ego_oled_probe(struct i2c_client *client,
             oled_operation.ID = SH1106;
         }
         ops_init(); /* Initialize oled-opearions for loaded chip */
-
-        chip->oled.gpio = -1;
-        ret = oled_parse(chip);
-        if (ret) {
-            ego_err(chip, "Failed to parse oled info\n");
+        if (!oled_operation.initialized) {
+            ego_err(chip, "Failed to initialized oled_operation\n");
             break;
         }
+
+        chip->oled.gpio = -1;
+        // ret = oled_parse(chip); //TODO 暂时使用固定VCC
+        // if (ret) {
+        //     ego_err(chip, "Failed to parse oled info\n");
+        //     break;
+        // }
 
         ret = ego_char_init(chip);
         if (ret) {
             ego_err(chip, "egoist failed to initialize\n");
             break;
         }
-        //TODO:Initialize OLED and display some salutatory
+        
+        oled_operation.FUNC->oled_init(chip);
+        oled_operation.FUNC->oled_conf(chip, COLOR_DISPLAY_NORMAL);
+        oled_draw_line();
+        oled_operation.FUNC->oled_refresh(chip);
 
     } while(0);
 

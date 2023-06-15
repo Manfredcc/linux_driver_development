@@ -37,6 +37,7 @@ static OPS_LIB ops_lib[MAX_SLAVE_CHIP] = { /* standard ops for slave chip */
     //     .oled_power = NULL,
     // },
 };
+static u8 OLED_GRAM[144][8]; /* Oled display buffer:128x64 */
 
 void ops_init(void)
 {
@@ -69,17 +70,65 @@ void ops_init(void)
     return;
 }
 
-/* SSD1306 */
+/* Basic Functions */
 /*==================================================================*/
-void ssd1306_clear(pegoist chip)
+void oled_show_char(u8 x, u8 y, u8 ch, u8 size)
 {
-    return;
+    //TODO
+}
+
+void oled_show_string(u8 x, u8 y, u8 *ch, u8 size)
+{
+    //TODO
+}
+
+void oled_show_num(u8 x, u8 y, u32 num, u8 len, u8 size)
+{
+    //TODO
+}
+
+void oled_draw_point(u8 x, u8 y)
+{
+    //TODO
+}
+
+// void oled_draw_line(u8 x1, u8 y1, u8 x, u8 y2)
+void oled_draw_line(void)
+{
+    int i;
+    for (i = 0; i < 20; i++) {
+        OLED_GRAM[50][i] = 1;
+    }
+}
+
+/*==================================================================*/
+
+/* SSD1306 Operations */
+/*==================================================================*/
+int ssd1306_clear(pegoist chip)
+{
+    int i, j;
+
+    if (!chip) {
+        pr_err("Egoist not initialized\n");
+        return -EINVAL;
+    }
+
+    for (i = 0; i < 8; i++) {
+        for (j = 0; j < 128; j++) {
+            OLED_GRAM[j][i] = 0;
+        }
+    }
+    ssd1306_refresh(chip);
+
+    return 0;
 }
 
 #define OLED_CMD    0x00
+#define OLED_DATA   0x40
 bool ssd1306_init(pegoist chip)
 {
-    int ret;
+    // int ret;
 
     if (!chip) {
         pr_err("Egoist not initialized\n");
@@ -87,14 +136,14 @@ bool ssd1306_init(pegoist chip)
     }
 
     /* Reset Oled */
-    ret |= gpio_direction_output(chip->oled.gpio, 1);
-    msleep(100);
-    ret |= gpio_direction_output(chip->oled.gpio, 0);
-    msleep(200);
-    ret |= gpio_direction_output(chip->oled.gpio, 1);
-    if (ret) {
-        ego_err(chip, "Can't set oled-gpio[VCC]\n");
-    }
+    // ret |= gpio_direction_output(chip->oled.gpio, 1);
+    // msleep(100);
+    // ret |= gpio_direction_output(chip->oled.gpio, 0);
+    // msleep(200);
+    // ret |= gpio_direction_output(chip->oled.gpio, 0); /* DC clear */
+    // if (ret) {
+    //     ego_err(chip, "Can't set oled-gpio[VCC]\n");
+    // }
 
     regmap_write(chip->regmap, OLED_CMD, 0xAE);
     regmap_write(chip->regmap, OLED_CMD, 0x00);
@@ -124,34 +173,85 @@ bool ssd1306_init(pegoist chip)
     regmap_write(chip->regmap, OLED_CMD, 0xA4);
     regmap_write(chip->regmap, OLED_CMD, 0xA6);
     regmap_write(chip->regmap, OLED_CMD, 0xAF);
-    oled_operation.FUNC->oled_clear(chip);
+    chip->oled.status = true;
+    ssd1306_clear(chip);
 
     return 0;
 }
 
-enum OLED_MODE {
-    COLOR_DISPLAY_NORMAL,
-    COLOR_INVERT,
-    DISPLAY_INVERT,
-    COLOR_DISPLAY_INVERT,
-};
-int ssd1306_conf(pegoist chip, int mode)
+
+int ssd1306_conf(pegoist chip, enum OLED_MODE mode)
 {
+    if (!chip) {
+        pr_err("Egoist not initialized\n");
+        return -EINVAL;
+    }
+
+    switch (mode) {
+    case COLOR_DISPLAY_NORMAL:
+        regmap_write(chip->regmap, OLED_CMD, 0xA6); /* Normal color */
+    case COLOR_INVERT:
+        regmap_write(chip->regmap, OLED_CMD, 0xA7); /* Invert color */
+        regmap_write(chip->regmap, OLED_CMD, 0xC8);
+        regmap_write(chip->regmap, OLED_CMD, 0xA1);
+        break;
+    case DISPLAY_INVERT:
+        regmap_write(chip->regmap, OLED_CMD, 0xA6); /* Normal color */
+    case COLOR_DISPLAY_INVERT:
+        regmap_write(chip->regmap, OLED_CMD, 0xA7); /* Invert color */
+        regmap_write(chip->regmap, OLED_CMD, 0xC0);
+        regmap_write(chip->regmap, OLED_CMD, 0xA0);
+        break;
+    }
     return 0;
 }
 
-bool ssd1306_refresh(pegoist chip)
+int ssd1306_refresh(pegoist chip)
 {
+    int i, j;
+
+    if (!chip) {
+        pr_err("Egoist not initialized\n");
+        return -EINVAL;
+    }
+
+    for (i = 0; i < 8; i++) {
+        regmap_write(chip->regmap, OLED_CMD, 0xb0 + i);
+        regmap_write(chip->regmap, OLED_CMD, 0x00);
+        regmap_write(chip->regmap, OLED_CMD, 0x10);
+        for (j = 0; j < 128; j++) {
+            regmap_write(chip->regmap, OLED_DATA, OLED_GRAM[j][i]);
+        }
+    }
+
     return 0;
 }
 
 bool ssd1306_power(pegoist chip, bool poweron)
 {
+    if (!chip) {
+        pr_err("Egoist not initialized\n");
+        return -EINVAL;
+    }
+    
+    if (poweron && !chip->oled.status) { /* Enable oled */
+        regmap_write(chip->regmap, OLED_CMD, 0x8D);
+        regmap_write(chip->regmap, OLED_CMD, 0x14);
+        regmap_write(chip->regmap, OLED_CMD, 0xAF);
+    }
+
+    if (!poweron && chip->oled.status) { /* Disable oled */
+        regmap_write(chip->regmap, OLED_CMD, 0x8D);
+        regmap_write(chip->regmap, OLED_CMD, 0x10);
+        regmap_write(chip->regmap, OLED_CMD, 0xAF);
+    }
+
     return 0;
 }
+
+/*==================================================================*/
 
 MODULE_AUTHOR("Manfred <1259106665@qq.com>");
 MODULE_DESCRIPTION("This driver which implements basic function for a oled-module compatible with I2C bus");
 MODULE_LICENSE("GPL");
 
-/*==================================================================*/
