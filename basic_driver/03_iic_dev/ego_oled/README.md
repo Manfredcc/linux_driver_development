@@ -12,15 +12,15 @@
 
 - [x] String
 
-![img](file:////home/ll/.config/QQ/nt_qq_ff852b2ef553efb6c6d891f6919495aa/nt_data/Pic/2023-06/Ori/939977d5975054eda703870666e74bed.jpeg)
+
 
 - [x] Rectangle
 
-![img](file:////home/ll/.config/QQ/nt_qq_ff852b2ef553efb6c6d891f6919495aa/nt_data/Pic/2023-06/Ori/1005c0facc53be8ba8a7e1e47704a45f.jpeg)
+
 
 - [x] Photo
 
-![img](file:////home/ll/.config/QQ/nt_qq_ff852b2ef553efb6c6d891f6919495aa/nt_data/Pic/2023-06/Ori/7be7352bff5ac17094f4710ad24dcb3d.jpeg)
+
 
 
 
