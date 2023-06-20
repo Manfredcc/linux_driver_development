@@ -12,15 +12,15 @@
 
 - [x] String
 
-
+![](README.assets/string.jpg)
 
 - [x] Rectangle
 
-
+![](README.assets/rectangle.jpg)
 
 - [x] Photo
 
-
+![](README.assets/cat.jpeg)
 
 
 
