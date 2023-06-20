@@ -43,6 +43,7 @@ typedef struct _egoist { /* For oled-dev */
     int major;
     int minor;
     struct _oled oled;
+    struct i2c_client *client;
     struct regmap *regmap;
     struct regmap_config regmap_config;
 

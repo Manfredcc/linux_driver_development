@@ -19,8 +19,9 @@
 #include <linux/regmap.h>
 #include "ego_oled.h"
 #include "oled_lib.h"
+#include "ssd1306.h"/*Tem*/
 
-/*==========================================================================
+/*===================================================================================
                         SSD1306-IIC-OLED Drivers
 
 GENERAL DESCRIPTION
@@ -31,10 +32,13 @@ with I2C bus.
     ----------      ---             -------------------------
     2023/06/11      Manfred         Initial release
     2023/06/13      Manfred         Fill basic framework
+    2023/06/20      Manfred         Add ssd1306-lib and implement basic function
 
-===========================================================================*/
+====================================================================================*/
 
 pegoist chip = NULL;
+#define POWER_OFF   0
+#define POWER_ON    1
 
 /* Implement OPS */
 #define OPS_LIB     'E'
@@ -114,25 +118,6 @@ static const struct file_operations ego_oled_ops = {
     .release          =   ego_release,
 };
 
-
-#define ND_PARSE    "/ego_oled"
-static int oled_parse(pegoist chip)
-{
-    chip->nd = of_find_node_by_path(ND_PARSE);
-    if (!chip->nd) {
-        ego_err(chip, "Failed to get node-info\n");
-        return -EINVAL;
-    }
-    ego_info(chip, "find node-info successfully\n");
-
-    chip->oled.gpio = of_get_named_gpio(chip->nd, "oled-gpio", 0);
-    memset(chip->oled.name, 0, sizeof(chip->oled.name));
-    sprintf(chip->oled.name, "oled");
-    gpio_request(chip->oled.gpio, chip->oled.name);
-
-    return 0;
-}
-
 static int ego_char_init(pegoist chip)
 {
     int ret;
@@ -148,11 +133,7 @@ static int ego_char_init(pegoist chip)
     cdev_init(&chip->cdev, &ego_oled_ops);
     chip->cdev.owner = THIS_MODULE;
 
-    ret = cdev_add(&chip->cdev, chip->devt, 1);
-    if (ret) {
-        ego_err(chip ,"Failed to add [ego_oled] to system\n");
-        return EBUSY;
-    }
+    cdev_add(&chip->cdev, chip->devt, 1);
 
     /* Initialize ego_class, visible in /sys/class */
     chip->class.name = "egoist_class";
@@ -186,26 +167,32 @@ void probe_release(pegoist chip)
     ego_info(chip, "Enter\n");
 
     if (chip != NULL) {
-        if (chip->oled.gpio != -1) {
-            gpio_free(chip->oled.gpio);
-            chip->oled.gpio = -1;
-        }
-
-        if (!IS_ERR_OR_NULL(chip->class)) {
-            unregister_chrdev_region(chip->devt, 1);
-        }
 
         if (!IS_ERR_OR_NULL(chip->dev)) {
             unregister_chrdev_region(chip->devt, 1);
+            device_destroy(&chip->class, chip->devt);
+            pr_err("-4-\n");
         }
+
+        pr_err("-1-\n");
+        if (!IS_ERR_OR_NULL(&chip->class)) {
+            unregister_chrdev_region(chip->devt, 1);
+            cdev_del(&chip->cdev);
+            class_destroy(&chip->class);
+            pr_err("-2-\n");
+        }
+
+            pr_err("-3-\n");
+        
        /* More resource will be added below */
     }
+    ego_info(chip, "Out\n");
 }
 
 static int ego_oled_probe(struct i2c_client *client,
                 const struct i2c_device_id *id)
 {
-    int ret;
+    int ret = 0;
 
     pr_err("%s: Enter\n", __func__);
 
@@ -223,6 +210,8 @@ static int ego_oled_probe(struct i2c_client *client,
         }
         chip->name = "ego_oled";
         chip->info_option = true;
+        chip->oled.status = false;
+        chip->client = client;
         chip->regmap_config.reg_bits = 8;
         chip->regmap_config.val_bits = 8;
         chip->regmap = regmap_init_i2c(client, &chip->regmap_config);
@@ -234,21 +223,16 @@ static int ego_oled_probe(struct i2c_client *client,
         switch (id->driver_data) {
         case SSD1306:
             oled_operation.ID = SSD1306;
+            break;
         case SH1106:
             oled_operation.ID = SH1106;
+            break;
         }
         ops_init(); /* Initialize oled-opearions for loaded chip */
         if (!oled_operation.initialized) {
             ego_err(chip, "Failed to initialized oled_operation\n");
             break;
         }
-
-        chip->oled.gpio = -1;
-        // ret = oled_parse(chip); //TODO 暂时使用固定VCC
-        // if (ret) {
-        //     ego_err(chip, "Failed to parse oled info\n");
-        //     break;
-        // }
 
         ret = ego_char_init(chip);
         if (ret) {
@@ -257,10 +241,8 @@ static int ego_oled_probe(struct i2c_client *client,
         }
         
         oled_operation.FUNC->oled_init(chip);
-        oled_operation.FUNC->oled_conf(chip, COLOR_DISPLAY_NORMAL);
-        oled_draw_line();
+        ssd1306_display_string(0, 0, "Lucy:We'll meet again on the Moon!", 16, 1);
         oled_operation.FUNC->oled_refresh(chip);
-
     } while(0);
 
     if (ret) {
@@ -279,19 +261,23 @@ static int ego_oled_remove(struct i2c_client *client)
     chip = (pegoist)i2c_get_clientdata(client);
     ego_info(chip, "Enter\n");
 
+    oled_operation.FUNC->oled_power(chip, POWER_OFF);
     probe_release(chip);
+
+    return 0;
 }
 
 static const struct i2c_device_id ego_oled_id[] = {
-    {"egoist, ssd1306", 0},
-    {"egoist, sh1106", 1},
+    {"ego-ssd1306", 0},
+    {"ego-ssd1306", 1},
     { /* sentinel */}
 };
+MODULE_DEVICE_TABLE(i2c, ego_oled_id);
 
 static struct i2c_driver ego_oled_i2c_driver = {
     .driver = {
         .owner = THIS_MODULE,
-        .name  = "ego_oled",
+        .name  = "egoist",
     },
     .probe  = ego_oled_probe,
     .remove = ego_oled_remove,

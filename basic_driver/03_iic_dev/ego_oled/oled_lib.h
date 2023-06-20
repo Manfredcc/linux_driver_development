@@ -4,17 +4,17 @@
 #include "ego_oled.h"
 
 enum OLED_MODE {
-    COLOR_DISPLAY_NORMAL,
+    COLOR_NORMAL,
     COLOR_INVERT,
+    DISPLAY_NORMAL,
     DISPLAY_INVERT,
-    COLOR_DISPLAY_INVERT,
 };
 
-typedef bool (*OLED_INIT)(pegoist chip);
+typedef void (*OLED_INIT)(pegoist chip);
 typedef int  (*OLED_CONF)(pegoist chip, enum OLED_MODE mode);
-typedef int (*OLED_REFRESH)(pegoist chip);
+typedef void (*OLED_REFRESH)(pegoist chip);
 typedef bool (*OLED_POWER)(pegoist chip, bool poweron);
-typedef int (*OLED_CLEAR)(pegoist chip);
+typedef void (*OLED_CLEAR)(pegoist chip);
 
 typedef struct _OPS_LIB {
     OLED_INIT       oled_init;
@@ -32,19 +32,14 @@ struct ops {
 };
 extern struct ops oled_operation;
 
-/* prototype */
 void ops_init(void);
-int ssd1306_clear(pegoist chip);
-bool ssd1306_init(pegoist chip);
-int ssd1306_conf(pegoist chip, enum OLED_MODE mode);
-int ssd1306_refresh(pegoist chip);
-bool ssd1306_power(pegoist chip, bool poweron);
 
-/* Basic functions */
-void oled_show_char(u8 x, u8 y, u8 ch, u8 size);
-void oled_show_string(u8 x, u8 y, u8 *ch, u8 size);
-void oled_show_num(u8 x, u8 y, u32 num, u8 len, u8 size);
-void oled_draw_point(u8 x, u8 y);
-void oled_draw_line(void);
+/* Chip::ssd1306-ops */
+void ego_ssd1306_clear(pegoist chip);
+void ego_ssd1306_init(pegoist chip);
+int ego_ssd1306_conf(pegoist chip, enum OLED_MODE mode);
+void ego_ssd1306_refresh(pegoist chip);
+bool ego_ssd1306_power(pegoist chip, bool poweron);
+
 
 #endif /* __OLED_LIB_H__ */

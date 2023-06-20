@@ -1,10 +1,14 @@
-obj-m := ego_oled.o
-obj-m := oled_lib.o
+KERNELDIR := /home/ll/03_work/ref_storage/linux_alpha/kernel
+KBUILD_CFLAGS += -g
+CURRENT_PATH := $(shell pwd)
 
-KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+egoist-objs := ego_oled.o oled_lib.o ssd1306.o
+obj-m := egoist.o
 
-all default: modules
-install: modules_install
+build: kernel_modules
 
-modules modules_install help clean:
-	$(MAKE) -C $(KERNELDIR) M=$(shell pwd) $@
+kernel_modules:
+	$(MAKE) -C $(KERNELDIR) M=$(CURRENT_PATH) modules
+
+clean:
+	$(MAKE) -C $(KERNELDIR) M=$(CURRENT_PATH) clean
