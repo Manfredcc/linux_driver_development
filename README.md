@@ -8,7 +8,9 @@ If you have some question, please feel free to leave message or test me directly
 
 **Note:**
 
-All drivers are developed based on linux-kernel-4.1.15
+Kernel: linux-kernel-4.1.15
+Device: I.MX6U-ALPHA[Emmc]
+
 
 
 
