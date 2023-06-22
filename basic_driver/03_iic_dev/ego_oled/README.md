@@ -1,3 +1,25 @@
+# Architecture
+
+![image-20230622201127215](README.assets/image-20230622201127215.png)
+
+As you see on the picture
+
+1. Main driver
+2. Generic operation scheduling
+3. Specific chip operation implementation
+
+Here's how to do it:
+
+![image-20230622201555787](README.assets/image-20230622201555787.png)
+
+![image-20230622201726136](README.assets/image-20230622201726136.png)
+
+![image-20230622201744833](README.assets/image-20230622201744833.png)
+
+**If you need this driver to support more I2C-oled driver, just add the specific ops-lib like `ssd1306.c`**
+
+
+
 # Achievement
 
 **make**
