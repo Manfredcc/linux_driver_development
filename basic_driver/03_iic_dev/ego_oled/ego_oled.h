@@ -31,6 +31,7 @@ struct _oled {
     char name[10];
     int gpio;
     bool status;
+    bool screen_on;
 };
 
 typedef struct _egoist { /* For oled-dev */

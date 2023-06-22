@@ -33,6 +33,7 @@ with I2C bus.
     2023/06/11      Manfred         Initial release
     2023/06/13      Manfred         Fill basic framework
     2023/06/20      Manfred         Add ssd1306-lib and implement basic function
+    2023/06/20      Manfred         Change ops method from Ioctrl to Sysfs
 
 ====================================================================================*/
 
@@ -40,42 +41,65 @@ pegoist chip = NULL;
 #define POWER_OFF   0
 #define POWER_ON    1
 
-/* Implement OPS */
-#define OPS_LIB     'E'
-#define LIB_CLEAR_NO    0x00
-#define LIB_INIT_NO     0x01
-#define LIB_CONF_NO     0x02
-#define LIB_REFRESH_NO  0x03
-#define LIB_POWER_NO    0x04
-
-#define LIB_CLEAR   _IO(OPS_LIB, LIB_CLEAR_NO)
-#define LIB_INIT    _IO(OPS_LIB, LIB_INIT_NO)
-#define LIB_CONF    _IOW(OPS_LIB, LIB_CONF_NO, unsigned long)
-#define LIB_REFRESH _IO(OPS_LIB, LIB_REFRESH_NO)
-#define LIB_POWER   _IOW(OPS_LIB, LIB_POWER_NO, unsigned long)
-static long ego_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+/* Implement OPS-Sysfs */
+static ssize_t screen_power_store(struct class *c, struct class_attribute *attr, 
+                    const char *buf, size_t count)
 {
-    switch (cmd) {
-    case LIB_CLEAR:
-        oled_operation.FUNC->oled_clear(chip);
-        break;
-    case LIB_INIT:
-        oled_operation.FUNC->oled_init(chip);
-        break;
-    case LIB_CONF:
-        oled_operation.FUNC->oled_conf(chip, arg);
-        break;
-    case LIB_REFRESH:
-        oled_operation.FUNC->oled_refresh(chip);
-        break;
-    case LIB_POWER:
-        oled_operation.FUNC->oled_power(chip, arg);
-        break;
-    default:
-        return -ENOTTY;
+    int tmp = false;
+
+    ego_info(chip, "Called\n");
+    sscanf(buf, "%d", &tmp);
+    if (true != tmp && false != tmp) {
+        ego_err(chip, "Invalid input\n");
+        return -EINVAL;
     }
+    chip->oled.screen_on = tmp;
+    oled_operation.FUNC->oled_power(chip, chip->oled.screen_on);
+
+    ego_info(chip, "screen is %s\n", chip->oled.screen_on ? "On" : "OFF");
+    return count;
+}
+
+static ssize_t screen_power_show(struct class *c, struct class_attribute *attr, char *buf)
+{
+    ego_info(chip, "Called\n");
+
+    return scnprintf(buf, PAGE_SIZE, "screen:%s\n", chip->oled.screen_on ? "On" : "OFF");
+}
+CLASS_ATTR_RW(screen_power);
+
+static ssize_t screen_clear_store(struct class *c, struct class_attribute *attr, 
+                    const char *buf, size_t count)
+{
+    int tmp = false;
+
+    ego_info(chip, "Called\n");
+    sscanf(buf, "%d", &tmp);
+    if (tmp == true) {
+        oled_operation.FUNC->oled_clear();
+        ego_info(chip, "screen is cleaned\n");
+
+    } else {
+        return -EINVAL;
+    }
+    return count;
+}
+
+static ssize_t screen_clear_show(struct class *c, struct class_attribute *attr, char *buf)
+{
+    ego_info(chip, "Called\n");
+
     return 0;
 }
+CLASS_ATTR_RW(screen_clear);
+
+
+static struct attribute *egoist_class_attrs[] = {
+    &class_attr_screen_power.attr,
+    &class_attr_screen_clear.attr,
+    NULL
+};
+ATTRIBUTE_GROUPS(egoist_class);
 
 static int ego_open(struct inode *inode, struct file *filp)
 {
@@ -101,7 +125,29 @@ static ssize_t ego_read(struct file *filp, char __user *buf, size_t count, loff_
 
 static ssize_t ego_write(struct file *filp, const char __user *buf, size_t count, loff_t *offset)
 {
-    return 0;
+    static unsigned char val[10];
+
+    pegoist dev = (pegoist)filp->private_data;
+
+    if (copy_from_user(val, buf, count)) {
+        ego_err(dev, "Kernel write failed!\n");
+        return -EFAULT;
+    }
+
+    ego_err(dev, "*val = %d\n", val[0]);
+    switch (val[0]) {
+    case 0:
+        oled_operation.FUNC->oled_power(chip, POWER_OFF);
+        break;
+    case 1:
+        oled_operation.FUNC->oled_power(chip, POWER_ON);
+        break;
+    default:
+        ego_info(dev, "Invalid input\n");
+        return -EINVAL;
+    }
+
+    return count;
 }
 
 static int ego_release(struct inode *inode, struct file *filp)
@@ -111,7 +157,6 @@ static int ego_release(struct inode *inode, struct file *filp)
 
 static const struct file_operations ego_oled_ops = {
     .owner            =   THIS_MODULE,
-    .unlocked_ioctl   =   ego_ioctl,
     .open             =   ego_open,
     .read             =   ego_read,
     .write            =   ego_write,
@@ -138,7 +183,7 @@ static int ego_char_init(pegoist chip)
     /* Initialize ego_class, visible in /sys/class */
     chip->class.name = "egoist_class";
     chip->class.owner = THIS_MODULE;
-    // chip->ego_class.dev_groups = egoist_class_groups;
+    chip->class.dev_groups = egoist_class_groups;
     ret = class_register(&chip->class);
     if (ret) {
         ego_err(chip, "Failed to create egoist class\n");

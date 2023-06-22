@@ -14,7 +14,7 @@ typedef void (*OLED_INIT)(pegoist chip);
 typedef int  (*OLED_CONF)(pegoist chip, enum OLED_MODE mode);
 typedef void (*OLED_REFRESH)(pegoist chip);
 typedef bool (*OLED_POWER)(pegoist chip, bool poweron);
-typedef void (*OLED_CLEAR)(pegoist chip);
+typedef void (*OLED_CLEAR)(void);
 
 typedef struct _OPS_LIB {
     OLED_INIT       oled_init;
@@ -35,7 +35,7 @@ extern struct ops oled_operation;
 void ops_init(void);
 
 /* Chip::ssd1306-ops */
-void ego_ssd1306_clear(pegoist chip);
+void ego_ssd1306_clear(void);
 void ego_ssd1306_init(pegoist chip);
 int ego_ssd1306_conf(pegoist chip, enum OLED_MODE mode);
 void ego_ssd1306_refresh(pegoist chip);

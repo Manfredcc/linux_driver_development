@@ -72,7 +72,7 @@ void ops_init(void)
 }
 
 /* SSD1306 Operations */
-void ego_ssd1306_clear(pegoist chip)
+void ego_ssd1306_clear(void)
 {
     ssd1306_clear_screen(0xff);
     ssd1306_clear_screen(0x00);
@@ -83,6 +83,7 @@ void ego_ssd1306_init(pegoist chip)
     set_ssd1306_i2c_client(chip->client);
     ssd1306_init();
     chip->oled.status = true;
+    chip->oled.screen_on = true;
 }
 
 int ego_ssd1306_conf(pegoist chip, enum OLED_MODE mode)
