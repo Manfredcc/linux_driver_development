@@ -216,19 +216,13 @@ void probe_release(pegoist chip)
         if (!IS_ERR_OR_NULL(chip->dev)) {
             unregister_chrdev_region(chip->devt, 1);
             device_destroy(&chip->class, chip->devt);
-            pr_err("-4-\n");
         }
 
-        pr_err("-1-\n");
         if (!IS_ERR_OR_NULL(&chip->class)) {
             unregister_chrdev_region(chip->devt, 1);
             cdev_del(&chip->cdev);
             class_destroy(&chip->class);
-            pr_err("-2-\n");
         }
-
-            pr_err("-3-\n");
-        
        /* More resource will be added below */
     }
     ego_info(chip, "Out\n");
