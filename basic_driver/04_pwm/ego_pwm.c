@@ -19,18 +19,32 @@
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
 #include <linux/mutex.h>
+#include <linux/delay.h>
 
-/*==================================================================================
+/*=======================================================================================
                 GENRATE A PWM BREATH LIGHT
 
 GENERAL DESCRIPTION
-    This driver which implement a simple PWM breath-light
+    This driver is intended to implement control operations for MG90S
 
     When              Who             What, Where, Why
     ----------        ---             ------------------------
     2023/07/17        Manfred         Initial reversion
+    2023/07/20        Manfred         Add support for 360-degree version, linear speed
 
-===================================================================================*/
+DETAILS
+    As MG90S has two version:180-degree and 360-degree, the pwm waves for them are different,
+    They both need period of 20ms, but they responses differ at duty cycle
+    360-degree:
+        - Valid duty cycle (ms)
+            > [0.5, 1.5)-Continuously forward rotation
+            > 1.5-Stop
+            > (1.5.2.5]-Continuously reversal rotation
+        - Speed
+            > The larger the absolute difference between the duty cycle and 1.5, 
+              the faster the speed
+    180-degree:
+========================================================================================*/
 static bool debug_option = true;    /* hard-code control debugging */
 
 #define ego_err(chip, fmt, ...)     \
@@ -46,7 +60,12 @@ static bool debug_option = true;    /* hard-code control debugging */
             ;   \
     } while(0)
 
-#define DEFAULE_PWM_PERIOD_NS   20000000 /* 200HZ */
+#define MG90S_DEFAULE_PWM_PERIOD_NS   20000000 /* 20ms */
+enum MG90S_ID{
+    MG90S_360,
+    MG90S_180,
+    MG90S_MAX,
+};
 
 typedef struct _egoist {
     char *name;
@@ -59,9 +78,10 @@ typedef struct _egoist {
     struct pwm_device *pwm;
     int pwm_id;
     unsigned int period;
-    unsigned int lightness_max;
-    unsigned int lightness; /* label */
+    unsigned int levels_max;
+    unsigned int speed; /* label */
     unsigned int *levels;
+    bool orientation;
     int duty_cycle;
     bool enabled;
     struct mutex ops_lock;
@@ -70,83 +90,133 @@ typedef struct _egoist {
 }egoist, *pegoist;
 pegoist chip = NULL;
 
+#define PWM_BASE_VAL    1500000     /* 1.5ms */
 static int compute_duty_cycle(pegoist chip)
 {
-    return chip->period * chip->levels[chip->lightness] / chip->levels[chip->lightness_max];
+    int size;
+    int scale;
+    int speed_label;
+    int opposite_duty_cycle_ns;
+    int absolute_duty_cycle_ns;
+
+    size = chip->levels_max;
+    scale = chip->levels[size];
+    speed_label = chip->levels[chip->speed];
+    /* opposite max - 1ms : 1 of 20 */
+    opposite_duty_cycle_ns = chip->period / 20 * speed_label / scale;
+    if (!chip->orientation)
+        absolute_duty_cycle_ns = PWM_BASE_VAL + opposite_duty_cycle_ns;
+    else
+        absolute_duty_cycle_ns = PWM_BASE_VAL - opposite_duty_cycle_ns;
+
+    return absolute_duty_cycle_ns;
 }
 
 static int pwm_update_status(pegoist chip)
 {
-    if (chip->lightness > 0) {
+    if (chip->speed > 0) {
         chip->duty_cycle = compute_duty_cycle(chip);
         pr_err("duty_cycle = %d, period=%d\n", chip->duty_cycle, chip->period);
         pwm_config(chip->pwm, chip->duty_cycle, chip->period);
         pwm_enable(chip->pwm);
         chip->enabled = true;
     } else {
-        pwm_config(chip->pwm, 0, chip->period);
+        pwm_config(chip->pwm, PWM_BASE_VAL, chip->period);
         pwm_disable(chip->pwm);
         chip->enabled = false;
     }
 
-    ego_info(chip, "lightness was set to %u, enable=%d\n", chip->lightness, chip->enabled);
+    ego_info(chip, "speed was set to %u, enable=%d\n", chip->speed, chip->enabled);
 
+    return 0;
+}
+
+int pwm_parse_360_dt(pegoist chip, struct device_node *node)
+{
+    struct property *prop;
+    int length;
+    int ret;
+
+    prop = of_find_property(node, "speed-levels", &length);
+    if (!prop)
+        return -EINVAL;
+    chip->levels_max = length / sizeof(u32);
+
+    if (chip->levels_max > 0) {
+        size_t size = sizeof(*chip->levels) * chip->levels_max;
+        chip->levels = devm_kzalloc(chip->dev, size, GFP_KERNEL);
+        if (!chip->levels)
+            return -ENOMEM;
+        
+        ret = of_property_read_u32_array(node, "speed-levels",
+                        chip->levels, chip->levels_max);
+        if (ret < 0)
+            return ret;
+        
+        chip->levels_max--; /* style: natural -> computer */
+    }
+
+    return 0;
+}
+
+int pwm_parse_180_dt(pegoist chip, struct device_node *node)
+{
     return 0;
 }
 
 int pwm_parst_dt(struct device *dev, pegoist chip)
 {
     struct device_node *node = dev->of_node;
-    struct property *prop;
-    int length;
+    int id;
     int ret;
 
     if (!node)
         return -ENODEV;
     
-    prop = of_find_property(node, "lightness-levels", &length);
-    if (!prop)
-        return -EINVAL;
-    chip->lightness_max = length / sizeof(u32);
-
-    if (chip->lightness_max > 0) {
-        size_t size = sizeof(*chip->levels) * chip->lightness_max;
-        chip->levels = devm_kzalloc(dev, size, GFP_KERNEL);
-        if (!chip->levels)
-            return -ENOMEM;
-        
-        ret = of_property_read_u32_array(node, "lightness-levels",
-                        chip->levels, chip->lightness_max);
-        if (ret < 0)
-            return ret;
-        
-        chip->lightness_max--; /* style: natural -> computer */
+    ret = of_property_read_u32(node, "mg90s-id", &id);
+    if (ret < 0)
+        return ret;
+    
+    switch (id) {
+    case MG90S_360:
+        ret = pwm_parse_360_dt(chip, node);
+        break;
+    case MG90S_180:
+        ret = pwm_parse_180_dt(chip, node);
+        break;
+    default:
+        ego_err(chip, "The code should not execute to this place\n");
+        ret = -ENOENT;
+        break;
+    }
+    
+    if (ret) {
+        return ret;
     }
 
     return 0;
 }
 
 /* Implement OPS-Sysfs */
-static ssize_t enable_store(struct class *c, struct class_attribute *attr, 
+static ssize_t orientation_store(struct class *c, struct class_attribute *attr, 
                     const char *buf, size_t count)
 {
     int rc;
-    unsigned long tmp_enabled;
-    // pegoist dev = container_of(c, struct _egoist, class);
+    unsigned long orientation;
 
-    rc = kstrtoul(buf, 0, &tmp_enabled);
+    rc = kstrtoul(buf, 0, &orientation);
     if (rc)
         return rc;
 
     rc = mutex_lock_interruptible(&chip->ops_lock);
 
-    if (tmp_enabled == chip->enabled) /* duplicate detection */
+    if (orientation == chip->orientation) /* duplicate detection */
         return count;
 
-    chip->enabled = !!(tmp_enabled);
+    chip->orientation = !!(orientation);
 
-    if (!chip->enabled)
-        chip->lightness = 0;
+    if (!chip->orientation)
+        chip->speed = 0;
     
     pwm_update_status(chip);
 
@@ -155,36 +225,29 @@ static ssize_t enable_store(struct class *c, struct class_attribute *attr,
     return count;
 }
 
-static ssize_t enable_show(struct class *c, struct class_attribute *attr, char *buf)
+static ssize_t orientation_show(struct class *c, struct class_attribute *attr, char *buf)
 {
-    pegoist dev = container_of(c, struct _egoist, class);
-    pr_err("&chip->class = %p, c = %p\n", &chip->class, c);
-    pr_err("enabled=%d\n", dev->enabled);
-    pr_err("chip-%p, dev-%p\n", dev, chip);
-    pr_err("enabled_c=%d\n", chip->enabled);
-
-    return sprintf(buf, "%d\n", chip->enabled);
+    return sprintf(buf, "%d\n", chip->orientation);
 }
-CLASS_ATTR_RW(enable);
+CLASS_ATTR_RW(orientation);
 
-static ssize_t lightness_store(struct class *c, struct class_attribute *attr, 
+static ssize_t speed_store(struct class *c, struct class_attribute *attr, 
                     const char *buf, size_t count)
 {
     int rc;
-    // pegoist dev = container_of(c, struct _egoist, class);
-    unsigned long lightness;
+    unsigned long speed;
 
-    rc = kstrtoul(buf, 0, &lightness);
+    rc = kstrtoul(buf, 0, &speed);
     if (rc)
         return rc;
 
     rc = mutex_lock_interruptible(&chip->ops_lock);
 
-    if (lightness > chip->lightness_max) {
+    if (speed > chip->levels_max) {
         rc = -EINVAL;
     } else {
-        ego_info(chip, "set lightness to %lu\n", lightness);
-        chip->lightness = lightness;
+        ego_info(chip, "set speed to %lu\n", speed);
+        chip->speed = speed;
         pwm_update_status(chip);
         rc = count;
     }
@@ -193,18 +256,15 @@ static ssize_t lightness_store(struct class *c, struct class_attribute *attr,
     return rc;
 }
 
-static ssize_t lightness_show(struct class *c, struct class_attribute *attr, char *buf)
+static ssize_t speed_show(struct class *c, struct class_attribute *attr, char *buf)
 {
-    // pegoist dev = container_of(c, struct _egoist, class);
-    pr_err("lightness_c=%d\n", chip->enabled);
-
-    return sprintf(buf, "%d\n", chip->lightness);
+    return sprintf(buf, "%d\n", chip->speed);
 }
-CLASS_ATTR_RW(lightness);
+CLASS_ATTR_RW(speed);
 
 static struct attribute *egoist_class_attrs[] = {
-    &class_attr_enable.attr,
-    &class_attr_lightness.attr,
+    &class_attr_orientation.attr,
+    &class_attr_speed.attr,
     NULL
 };
 ATTRIBUTE_GROUPS(egoist_class);
@@ -233,7 +293,18 @@ static int ego_char_init(pegoist chip)
     /* Initialize ego_class, visible in /sys/class */
     chip->class.name = "egoist_class";
     chip->class.owner = THIS_MODULE;
-    chip->class.dev_groups = egoist_class_groups;
+    switch (chip->pwm_id) {
+    case MG90S_360:
+        chip->class.dev_groups = egoist_class_groups;
+        break;
+    case MG90S_180:
+        chip->class.dev_groups = NULL;
+    default:
+        ego_err(chip, "The code should not execute to this place\n");
+        ret = -ENOENT;
+        break; 
+    }
+    
     ret = class_register(&chip->class);
     if (ret) {
         ego_err(chip, "Failed to create egoist class\n");
@@ -242,9 +313,9 @@ static int ego_char_init(pegoist chip)
         return ret;
     }
 
-    chip->dev = device_create(&chip->class, NULL,
+    chip->dev = device_create(&chip->class, chip->dev,
                                     chip->devt, NULL,
-                                    "%s", "egoist_oled");
+                                    "%s", "pwm_mg90s");
     if (IS_ERR(&chip->dev)) {
         ego_err(chip, "Faile to create ego device\n");
         class_destroy(&chip->class);
@@ -270,8 +341,9 @@ static int egoist_probe(struct platform_device *pdev)
             ret = -ENOMEM;
             break;
         }
-        chip->name = "Egoist";
+        chip->name = "ego_mg90s";
         chip->debug_on = true;
+        chip->dev = &pdev->dev;
         mutex_init(&chip->ops_lock);
 
         ret = pwm_parst_dt(&pdev->dev, chip);
@@ -296,15 +368,16 @@ static int egoist_probe(struct platform_device *pdev)
             }
         }
         
-        ego_info(chip, "got the pwm successfully\n");
+        ego_info(chip, "got pwms successfully\n");
 
         chip->period = pwm_get_period(chip->pwm);
         if (!chip->period) {
-            chip->period = DEFAULE_PWM_PERIOD_NS;
+            chip->period = MG90S_DEFAULE_PWM_PERIOD_NS;
             pwm_set_period(chip->pwm, chip->period);
         }
 
-        chip->lightness = 0;
+        chip->speed = 0;
+        chip->orientation = 0;  /* default:forward rotation */
         pwm_update_status(chip);
         ego_char_init(chip);
 
@@ -344,7 +417,7 @@ static int egoist_remove(struct platform_device *dev)
 }
 
 static const struct of_device_id ego_of_match[] = {
-    {.compatible = "egoist, pwm_light"},
+    {.compatible = "egoist, pwm-mg90s"},
     {/* Sentinel */},
 };
 
