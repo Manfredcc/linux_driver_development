@@ -91,7 +91,6 @@ typedef struct _egoist {
     bool orientation;
     unsigned int angle;
     int duty_cycle;
-    bool enabled;
     struct mutex ops_lock;
     
     bool debug_on;
@@ -134,27 +133,10 @@ static int  pwm_update_status(pegoist chip)
 {
     chip->duty_cycle = compute_duty_cycle(chip);
 
-    if (!chip->pwm_id) {
-        if (chip->speed > 0) {
-            pwm_config(chip->pwm, chip->duty_cycle, chip->period);
-            pwm_enable(chip->pwm);
-            chip->enabled = true;
-        } else {
-            pwm_config(chip->pwm, PWM_BASE_VAL, chip->period);
-            pwm_disable(chip->pwm);
-            chip->enabled = false;
-        }
-    } else {
-        if (chip->angle >= 0) {
-            pwm_config(chip->pwm, chip->duty_cycle, chip->period);
-            pwm_enable(chip->pwm);
-        } else {
-            pwm_config(chip->pwm, DEAD_BAND_VOL, chip->period);
-            pwm_disable(chip->pwm);
-            chip->enabled = false;
-        }
-    }
-    ego_info(chip, "duty_cycle:%u, peirod:%d, enable:%d\n", chip->duty_cycle, chip->period, chip->enabled);
+    pwm_config(chip->pwm, chip->duty_cycle, chip->period);
+    pwm_enable(chip->pwm);
+    
+    ego_info(chip, "duty_cycle:%u, peirod:%d\n", chip->duty_cycle, chip->period);
 
     return 0;
 }
@@ -465,7 +447,6 @@ static int egoist_remove(struct platform_device *dev)
 {
     pwm_config(chip->pwm, 0, chip->period);
     pwm_disable(chip->pwm);
-    chip->enabled = false;
 
     if (!IS_ERR_OR_NULL(chip->dev)) {
             unregister_chrdev_region(chip->devt, 1);
