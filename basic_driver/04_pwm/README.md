@@ -24,7 +24,9 @@ MG90S can be driven by specific PWM waves. It has two models, and each model has
 
 - 180-degree model
 
-    >TODO
+    >**valid duty cycle (ms) (degree)**
+    >
+    > [0.5, 2.5]    0 -> 180
 
 **Physical map**
 

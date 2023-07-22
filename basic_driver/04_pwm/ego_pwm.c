@@ -31,6 +31,7 @@ GENERAL DESCRIPTION
     ----------        ---             ------------------------
     2023/07/17        Manfred         Initial reversion
     2023/07/20        Manfred         Add support for 360-degree version, linear speed
+    2023/07/21        Manfred         Add support for 180-degree version, linear increasing
 
 DETAILS
     As MG90S has two version:180-degree and 360-degree, the pwm waves for them are different,
@@ -44,6 +45,12 @@ DETAILS
             > The larger the absolute difference between the duty cycle and 1.5, 
               the faster the speed
     180-degree:
+        - Valid duty cycle (ms) (degree)
+            > 0.5   0
+            > 1.0   45
+            > 1.5   90
+            > 2.0   135
+            > 2.5   180
 ========================================================================================*/
 static bool debug_option = true;    /* hard-code control debugging */
 
@@ -82,6 +89,7 @@ typedef struct _egoist {
     unsigned int speed; /* label */
     unsigned int *levels;
     bool orientation;
+    unsigned int angle;
     int duty_cycle;
     bool enabled;
     struct mutex ops_lock;
@@ -91,6 +99,7 @@ typedef struct _egoist {
 pegoist chip = NULL;
 
 #define PWM_BASE_VAL    1500000     /* 1.5ms */
+#define DEAD_BAND_VOL   500000      /* 0.5ms */
 static int compute_duty_cycle(pegoist chip)
 {
     int size;
@@ -99,34 +108,53 @@ static int compute_duty_cycle(pegoist chip)
     int opposite_duty_cycle_ns;
     int absolute_duty_cycle_ns;
 
-    size = chip->levels_max;
-    scale = chip->levels[size];
-    speed_label = chip->levels[chip->speed];
-    /* opposite max - 1ms : 1 of 20 */
-    opposite_duty_cycle_ns = chip->period / 20 * speed_label / scale;
-    if (!chip->orientation)
-        absolute_duty_cycle_ns = PWM_BASE_VAL + opposite_duty_cycle_ns;
-    else
-        absolute_duty_cycle_ns = PWM_BASE_VAL - opposite_duty_cycle_ns;
+    if (chip->pwm_id) { /* 180-degree */
+        if (0 == chip->angle)
+            return DEAD_BAND_VOL + 10; /* recovery to zero degree */
 
-    return absolute_duty_cycle_ns;
+        return (chip->angle * chip->period / 1800) + DEAD_BAND_VOL;
+
+    } else { /* 360-degree */
+        size = chip->levels_max;
+        scale = chip->levels[size];
+        speed_label = chip->levels[chip->speed];
+        /* opposite max - 1ms : 1 of 20 */
+        opposite_duty_cycle_ns = chip->period / 20 * speed_label / scale;
+        if (!chip->orientation)
+            absolute_duty_cycle_ns = PWM_BASE_VAL + opposite_duty_cycle_ns;
+        else
+            absolute_duty_cycle_ns = PWM_BASE_VAL - opposite_duty_cycle_ns;
+
+        return absolute_duty_cycle_ns;
+    }
+    
 }
 
-static int pwm_update_status(pegoist chip)
+static int  pwm_update_status(pegoist chip)
 {
-    if (chip->speed > 0) {
-        chip->duty_cycle = compute_duty_cycle(chip);
-        pr_err("duty_cycle = %d, period=%d\n", chip->duty_cycle, chip->period);
-        pwm_config(chip->pwm, chip->duty_cycle, chip->period);
-        pwm_enable(chip->pwm);
-        chip->enabled = true;
-    } else {
-        pwm_config(chip->pwm, PWM_BASE_VAL, chip->period);
-        pwm_disable(chip->pwm);
-        chip->enabled = false;
-    }
+    chip->duty_cycle = compute_duty_cycle(chip);
 
-    ego_info(chip, "speed was set to %u, enable=%d\n", chip->speed, chip->enabled);
+    if (!chip->pwm_id) {
+        if (chip->speed > 0) {
+            pwm_config(chip->pwm, chip->duty_cycle, chip->period);
+            pwm_enable(chip->pwm);
+            chip->enabled = true;
+        } else {
+            pwm_config(chip->pwm, PWM_BASE_VAL, chip->period);
+            pwm_disable(chip->pwm);
+            chip->enabled = false;
+        }
+    } else {
+        if (chip->angle >= 0) {
+            pwm_config(chip->pwm, chip->duty_cycle, chip->period);
+            pwm_enable(chip->pwm);
+        } else {
+            pwm_config(chip->pwm, DEAD_BAND_VOL, chip->period);
+            pwm_disable(chip->pwm);
+            chip->enabled = false;
+        }
+    }
+    ego_info(chip, "duty_cycle:%u, peirod:%d, enable:%d\n", chip->duty_cycle, chip->period, chip->enabled);
 
     return 0;
 }
@@ -174,6 +202,8 @@ int pwm_parst_dt(struct device *dev, pegoist chip)
         return -ENODEV;
     
     ret = of_property_read_u32(node, "mg90s-id", &id);
+    chip->pwm_id = id;
+
     if (ret < 0)
         return ret;
     
@@ -215,9 +245,6 @@ static ssize_t orientation_store(struct class *c, struct class_attribute *attr,
 
     chip->orientation = !!(orientation);
 
-    if (!chip->orientation)
-        chip->speed = 0;
-    
     pwm_update_status(chip);
 
     mutex_unlock(&chip->ops_lock);
@@ -230,6 +257,36 @@ static ssize_t orientation_show(struct class *c, struct class_attribute *attr, c
     return sprintf(buf, "%d\n", chip->orientation);
 }
 CLASS_ATTR_RW(orientation);
+
+static ssize_t angle_store(struct class *c, struct class_attribute *attr, 
+                    const char *buf, size_t count)
+{
+    int rc;
+    unsigned long angle;
+
+    rc = kstrtoul(buf, 0, &angle);
+    if (rc)
+        return rc;
+
+    rc = mutex_lock_interruptible(&chip->ops_lock);
+
+    if (angle != chip->angle && angle >= 0 && angle <= 180)
+        chip->angle = angle;
+    else
+        return count;
+
+    pwm_update_status(chip);
+
+    mutex_unlock(&chip->ops_lock);
+
+    return count;
+}
+
+static ssize_t angle_show(struct class *c, struct class_attribute *attr, char *buf)
+{
+    return sprintf(buf, "%d\n", chip->angle);
+}
+CLASS_ATTR_RW(angle);
 
 static ssize_t speed_store(struct class *c, struct class_attribute *attr, 
                     const char *buf, size_t count)
@@ -262,12 +319,19 @@ static ssize_t speed_show(struct class *c, struct class_attribute *attr, char *b
 }
 CLASS_ATTR_RW(speed);
 
-static struct attribute *egoist_class_attrs[] = {
+static struct attribute *egoist_360_class_attrs[] = {
     &class_attr_orientation.attr,
     &class_attr_speed.attr,
     NULL
 };
-ATTRIBUTE_GROUPS(egoist_class);
+ATTRIBUTE_GROUPS(egoist_360_class);
+
+
+static struct attribute *egoist_180_class_attrs[] = {
+    &class_attr_angle.attr,
+    NULL
+};
+ATTRIBUTE_GROUPS(egoist_180_class);
 
 static const struct file_operations ego_oled_ops = {
     .owner            =   THIS_MODULE,
@@ -295,10 +359,11 @@ static int ego_char_init(pegoist chip)
     chip->class.owner = THIS_MODULE;
     switch (chip->pwm_id) {
     case MG90S_360:
-        chip->class.dev_groups = egoist_class_groups;
+        chip->class.dev_groups = egoist_360_class_groups;
         break;
     case MG90S_180:
-        chip->class.dev_groups = NULL;
+        chip->class.dev_groups = egoist_180_class_groups;
+        break;
     default:
         ego_err(chip, "The code should not execute to this place\n");
         ret = -ENOENT;
@@ -375,9 +440,11 @@ static int egoist_probe(struct platform_device *pdev)
             chip->period = MG90S_DEFAULE_PWM_PERIOD_NS;
             pwm_set_period(chip->pwm, chip->period);
         }
+        ego_info(chip, "initial period is %d\n", chip->period);
 
         chip->speed = 0;
         chip->orientation = 0;  /* default:forward rotation */
+        chip->angle = 0;
         pwm_update_status(chip);
         ego_char_init(chip);
 
