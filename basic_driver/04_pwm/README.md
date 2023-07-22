@@ -44,9 +44,9 @@ MG90S can be driven by specific PWM waves. It has two models, and each model has
 
 **180-degree model**
 
-TODO
+![image-20230722141911240](README.assets/image-20230722141911240.png)
 
-
+Just change the `mg90s-id` to 1
 
 # Driver
 
@@ -81,31 +81,22 @@ module_platform_driver(egoist_drv);
 **Core operation**
 
 ```c
-static int pwm_update_status(pegoist chip)
+static int  pwm_update_status(pegoist chip)
 {
-    if (chip->speed > 0) {
-        chip->duty_cycle = compute_duty_cycle(chip);
-        pr_err("duty_cycle = %d, period=%d\n", chip->duty_cycle, chip->period);
-        pwm_config(chip->pwm, chip->duty_cycle, chip->period);
-        pwm_enable(chip->pwm);
-        chip->enabled = true;
-    } else {
-        pwm_config(chip->pwm, PWM_BASE_VAL, chip->period);
-        pwm_disable(chip->pwm);
-        chip->enabled = false;
-    }
+    chip->duty_cycle = compute_duty_cycle(chip);
 
-    ego_info(chip, "speed was set to %u, enable=%d\n", chip->speed, chip->enabled);
+    pwm_config(chip->pwm, chip->duty_cycle, chip->period);
+    pwm_enable(chip->pwm);
+    
+    ego_info(chip, "duty_cycle:%u, peirod:%d\n", chip->duty_cycle, chip->period);
 
     return 0;
 }
 ```
 
-This function configures PWM based on the value of speed-level from user-space
-
-![image-20230720115840033](README.assets/image-20230720115840033.png)
-
 **Sysfs interface**
+
+**360-degree**
 
 - speed
 
@@ -116,3 +107,14 @@ This function configures PWM based on the value of speed-level from user-space
     - 0(default) : clockwise
     - 1: counterclockwise
 
+![image-20230720115840033](README.assets/image-20230720115840033.png)
+
+
+
+**180-degree**
+
+- angle
+
+    >  The `angle` represents the angle of the servo. The range of the it is from 0 to 180 degree, which determines the duty cycle of pwm-out-waves.
+
+![image-20230722143511322](README.assets/image-20230722143511322.png)
